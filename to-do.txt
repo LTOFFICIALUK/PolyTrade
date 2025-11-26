@@ -1,0 +1,69 @@
+Data needed: 
+- polymarket live feed of orderbok buy/sell prices at all 
+times, for every single second of the day. store this in a 
+professional manner for all pairs: BTC, ETH, XRP, SOL.
+- Tradingview charts for all: BTC, ETH, XRP, SOL
+
+
+
+TERMINAL: 
+- Build our own charting for the price of polymarket, for 
+the current session, showing candlesticks of the price action, 
+between 0c and 99c. This will give us a better visual for every 
+trade so we can see what posibility it is for us to get a better price.
+
+Market Tab: 
+++++-- Switch button from market to limit, showing limit pricing targets with
+with "quick trade" options. Button can be contianed in the tabbing at the 
+top of the page, looking like a switch icon. +++++
+++++-- **Time icon** to bring up a "Quick Trade" panel. This panel will help
+users click to place a trade fast and simply. Pencil icon to allow
+users to modify the quick trade. Something like "Q: 100, P: 38c" 
+where Q=quantity of shares and P=price per share++++
+- Pencil button next to the predetermined amounts. These amounts should 
+be "5, 10, 25, CLEAR" by default. Clicking the pencil icon will allow the user
+to change their quick quantity. 
+- Swtich the PnL at the bottom to be "Avg. PPS (i), Total Cost, Potential 
+Payout, Profit if UP/DOWN" 
+PPS=Price/Share
+- Under Buy / Sell buttons we need a disclaimer to say that the user agrees 
+to T&C and is aware that price may differ from what is shown. Always place 
+limit order to be sure you get the right price
+- Change from YES to UP. 
+- When i change from "YES" by clicking again, make sure SELL also changes
+
+Strategies Tab:
+- This is perfect already
+
+Analytics Tab:
+- Tells us the Strategy we are looking at
+- Avg's over past 50 trades
+Data:
+- Total Trades (all-time)
+- Win Rate
+- Total PnL 
+- Avg Trade to Avg Cost
+- Avg Frequency (how often we get this) - 1.3 times per day, 3.5 
+times per week. 
+- Avg Profit
+- Avg Loss
+- W/L Ratio
+- Best Trade
+- Worst Trade
+
+
+STRATEGIES:
+- Tabled list of all strategies we have. 
+- "Create new" at the bottom of the list
+- Inactive strategies section under the "active" strategies broken 
+up by a breaker line. Inactive strategies are strategies that are not 
+currently running.
+- ON/OFF toggle at the very left. Data in the columns 
+
+STRATEGY CLICKED: 
+- opens a "Strategy" page. 
+- Has a chart to show PnL over the past 24h, 1w, 1m, All Time. 
+- Has a toggle on / off button
+- Shows paper trade estimate results in a new tab at the top of the screen
+Tabs say: "Strategy, Paper Trade" 
+- Shows strategy type
