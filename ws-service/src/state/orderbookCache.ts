@@ -52,7 +52,7 @@ export class OrderbookCache {
    */
   clearStale(): void {
     const now = Date.now()
-    for (const [marketId, data] of this.cache.entries()) {
+    for (const [marketId, data] of Array.from(this.cache.entries())) {
       if (now - data.timestamp > this.maxAge) {
         this.cache.delete(marketId)
       }

@@ -1279,7 +1279,7 @@ function startOrderbookPolling(wsServer: WebSocketServer, markets: any[]): void 
     }
     
     // Also add any subscribed tokenIds that aren't already in our list
-    for (const subscribedId of subscribedIds) {
+    for (const subscribedId of Array.from(subscribedIds)) {
       // Check if this is a tokenId (long numeric string) or marketId
       // If it's not in our marketMap, try to fetch it directly
       if (!marketMap.has(subscribedId) && subscribedId.length > 20) {
@@ -1297,7 +1297,7 @@ function startOrderbookPolling(wsServer: WebSocketServer, markets: any[]): void 
       const orderbooks = await fetchMultipleOrderbooks(tokenIds)
       
       // Process results
-      for (const [tokenId, orderbook] of orderbooks.entries()) {
+      for (const [tokenId, orderbook] of Array.from(orderbooks.entries())) {
         if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
           continue
         }

@@ -147,16 +147,16 @@ Should show HTML (lots of text).
 **You need 2 terminal windows:**
 
 **Terminal 1 - WebSocket Service:**
-```bash
-cd /Users/lukecarter/Downloads/PolyTrade-main/ws-service
-HTTP_PORT=8081 npm run dev
-```
+   ```bash
+   cd /Users/lukecarter/Downloads/PolyTrade-main/ws-service
+   HTTP_PORT=8081 npm run dev
+   ```
 
 **Terminal 2 - Next.js Frontend:**
-```bash
-cd /Users/lukecarter/Downloads/PolyTrade-main
-npm run dev
-```
+   ```bash
+   cd /Users/lukecarter/Downloads/PolyTrade-main
+   npm run dev
+   ```
 
 Then open: `http://localhost:3000` in your browser.
 

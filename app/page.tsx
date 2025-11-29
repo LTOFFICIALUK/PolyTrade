@@ -1,16 +1,21 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import PolyLineChart from '@/components/PolyLineChart'
 import TradingViewChart from '@/components/TradingViewChart'
 import TradingPanel from '@/components/TradingPanel'
 import ChartControls from '@/components/ChartControls'
-import OrderBook from '@/components/OrderBook'
+import OrderBook, { OrderBookHandle } from '@/components/OrderBook'
 import { TradingProvider, useTradingContext } from '@/contexts/TradingContext'
 
 function TerminalContent() {
   const { selectedPair, showTradingView } = useTradingContext()
   const [activeTab, setActiveTab] = useState<'position' | 'orders' | 'history' | 'orderbook'>('position')
+  const [, forceUpdate] = useState({})
+  const orderBookRef = useRef<OrderBookHandle>(null)
+  
+  // Helper to get current auto-centering state
+  const isAutoCentering = orderBookRef.current?.isAutoCentering() ?? true
 
   // Mock data for different assets
   const positionData = [
@@ -111,15 +116,42 @@ function TerminalContent() {
           </button>
           <button
             onClick={() => setActiveTab('orderbook')}
-            className={`px-4 py-3 text-sm font-semibold transition-colors relative ${
+            className={`px-4 py-3 text-sm font-semibold transition-colors relative flex items-center gap-2 ${
               activeTab === 'orderbook'
                 ? 'text-white'
                 : 'text-gray-400 hover:text-white'
             }`}
           >
-            Order Book
+            <span>Order Book</span>
             {activeTab === 'orderbook' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-primary" />
+              <>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    orderBookRef.current?.toggleAutoCenter()
+                    // Force re-render to update button appearance
+                    forceUpdate({})
+                  }}
+                  className="text-gray-400 hover:text-white transition-colors p-1"
+                  aria-label="Toggle auto-center orderbook"
+                  title={isAutoCentering ? "Disable auto-center (allow manual scroll)" : "Enable auto-center (lock to spread)"}
+                >
+                  <svg
+                    className={`w-4 h-4 transition-opacity rotate-90 ${isAutoCentering ? '' : 'opacity-50'}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+                    />
+                  </svg>
+                </button>
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-primary" />
+              </>
             )}
           </button>
         </div>
@@ -254,7 +286,7 @@ function TerminalContent() {
           )}
           {activeTab === 'orderbook' && (
             <div className="w-full h-full">
-              <OrderBook />
+              <OrderBook ref={orderBookRef} />
             </div>
           )}
         </div>

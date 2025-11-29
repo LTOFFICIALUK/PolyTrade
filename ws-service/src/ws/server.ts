@@ -3,7 +3,7 @@
  * Handles client connections and broadcasts market updates
  */
 
-import WebSocket from 'ws'
+import WebSocket, { WebSocketServer as WSServer } from 'ws'
 import { Server as HTTPServer } from 'http'
 import {
   ClientMessage,
@@ -22,7 +22,7 @@ import { PolymarketConnector, MarketUpdate } from '../polymarket/subscriptions'
 import { fetchOrderbook } from '../polymarket/clobClient'
 
 export class WebSocketServer {
-  private wss: WebSocket.Server
+  private wss: WSServer
   private httpServer: HTTPServer
   private stateStore: MarketsStateStore
   private orderbookCache: OrderbookCache
@@ -34,7 +34,7 @@ export class WebSocketServer {
 
   constructor(httpServer: HTTPServer, port: number) {
     this.httpServer = httpServer
-    this.wss = new WebSocket.Server({ server: httpServer, path: '/ws' })
+    this.wss = new WSServer({ server: httpServer, path: '/ws' })
     this.stateStore = new MarketsStateStore()
     this.orderbookCache = new OrderbookCache()
     this.polymarketConnector = new PolymarketConnector()
@@ -187,7 +187,7 @@ export class WebSocketServer {
       
       // Check if any other client is subscribed
       let hasOtherSubscribers = false
-      for (const [client, subs] of this.clientSubscriptions.entries()) {
+      for (const [client, subs] of Array.from(this.clientSubscriptions.entries())) {
         if (client !== ws && subs.has(marketId)) {
           hasOtherSubscribers = true
           break
@@ -207,7 +207,7 @@ export class WebSocketServer {
   }
 
   hasSubscribers(marketIdOrTokenId: string): boolean {
-    for (const subscriptions of this.clientSubscriptions.values()) {
+    for (const subscriptions of Array.from(this.clientSubscriptions.values())) {
       if (subscriptions.has(marketIdOrTokenId)) {
         return true
       }
@@ -232,7 +232,7 @@ export class WebSocketServer {
 
     let sentCount = 0
     // Find all clients subscribed to this market (by marketId or tokenId)
-    for (const [client, subscriptions] of this.clientSubscriptions.entries()) {
+    for (const [client, subscriptions] of Array.from(this.clientSubscriptions.entries())) {
       const isSubscribed = subscriptions.has(marketId) || subscriptions.has(tokenId)
       if (client.readyState === WebSocket.OPEN && isSubscribed) {
         try {
@@ -275,7 +275,7 @@ export class WebSocketServer {
     this.updateThrottle.set(update.marketId, now)
 
     // Find all clients subscribed to this market
-    for (const [client, subscriptions] of this.clientSubscriptions.entries()) {
+    for (const [client, subscriptions] of Array.from(this.clientSubscriptions.entries())) {
       if (client.readyState === WebSocket.OPEN && subscriptions.has(update.marketId)) {
         try {
           if (update.type === 'orderbook') {
@@ -316,7 +316,7 @@ export class WebSocketServer {
         ts: Date.now(),
       }
       
-      for (const [client] of this.clientSubscriptions.entries()) {
+      for (const [client] of Array.from(this.clientSubscriptions.entries())) {
         if (client.readyState === WebSocket.OPEN) {
           try {
             client.send(JSON.stringify(heartbeat))
@@ -348,8 +348,8 @@ export class WebSocketServer {
    */
   getAllSubscribedIds(): Set<string> {
     const subscribedIds = new Set<string>()
-    for (const subscriptions of this.clientSubscriptions.values()) {
-      for (const id of subscriptions) {
+    for (const subscriptions of Array.from(this.clientSubscriptions.values())) {
+      for (const id of Array.from(subscriptions)) {
         subscribedIds.add(id)
       }
     }

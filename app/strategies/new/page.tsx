@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, KeyboardEvent, MouseEvent, useEffect, useRef } from 'react'
+import { useState, KeyboardEvent, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 type TabType = 'basics' | 'tradingview' | 'polymarket' | 'risk' | 'schedule'
@@ -260,7 +260,7 @@ const PresetSelector = ({ value, onChange, options, placeholder, className = '',
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (event: globalThis.MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false)
       }
@@ -387,7 +387,7 @@ const CustomDropdown = ({ value, onChange, options, placeholder, className = '',
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (event: globalThis.MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false)
       }
@@ -409,7 +409,7 @@ const CustomDropdown = ({ value, onChange, options, placeholder, className = '',
     setIsOpen(false)
   }
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       setIsOpen(!isOpen)
@@ -994,7 +994,7 @@ function TradingViewTab({
 
       // Expand all new indicators
       newIndicators.forEach((ind) => {
-        setExpandedIndicators((prev) => new Set([...prev, ind.id]))
+        setExpandedIndicators((prev) => new Set([...Array.from(prev), ind.id]))
       })
     }
   }
@@ -1124,7 +1124,7 @@ function TradingViewTab({
         },
       ],
     })
-    setExpandedIndicators(new Set([...expandedIndicators, newId]))
+    setExpandedIndicators(new Set([...Array.from(expandedIndicators), newId]))
     setNewIndicator({ preset: '', type: '', timeframe: 'Use strategy timeframe', parameters: {} })
     setShowAddIndicatorForm(false)
   }
@@ -1452,7 +1452,7 @@ function TradingViewTab({
           {config.indicators.map((indicator) => {
             const isExpanded = expandedIndicators.has(indicator.id)
             const isEditing = editingIndicators.has(indicator.id)
-            const hasPreset = indicator.preset && indicator.preset !== 'custom'
+            const hasPreset = Boolean(indicator.preset && indicator.preset !== 'custom')
             const params = getIndicatorParameters(indicator.type)
             const isLocked = hasPreset && !isEditing
 

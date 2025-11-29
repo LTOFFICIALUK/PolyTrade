@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useMemo, useRef, useEffect, KeyboardEvent } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
+import type { KeyboardEvent } from 'react'
 
 interface Trade {
   id: string
@@ -58,7 +59,7 @@ const CustomDropdown = ({ value, onChange, options, placeholder, className = '',
     setIsOpen(false)
   }
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       setIsOpen(!isOpen)

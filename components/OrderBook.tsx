@@ -1,9 +1,15 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, forwardRef, useImperativeHandle } from 'react'
 import { useWebSocket } from '@/contexts/WebSocketContext'
 import { useTradingContext } from '@/contexts/TradingContext'
 import useCurrentMarket from '@/hooks/useCurrentMarket'
+
+export interface OrderBookHandle {
+  centerToSpread: () => void
+  toggleAutoCenter: () => void
+  isAutoCentering: () => boolean
+}
 
 interface OrderBookEntry {
   price: number
@@ -76,8 +82,8 @@ const normalizeOrderbookData = (payload: any): OrderBookData => {
   }
 }
 
-const OrderBook = () => {
-  const { selectedPair, selectedTimeframe } = useTradingContext()
+const OrderBook = forwardRef<OrderBookHandle>((props, ref) => {
+  const { selectedPair, selectedTimeframe, activeTokenId } = useTradingContext()
   const { isConnected, subscribeMarkets } = useWebSocket()
   const { market, loading: marketLoading, error: marketError } = useCurrentMarket({
     pair: selectedPair,
@@ -85,127 +91,250 @@ const OrderBook = () => {
   })
   
   console.log('[OrderBook] Render - isConnected:', isConnected, 'market:', market?.marketId, 'tokenId:', market?.tokenId)
-  const [orderBook, setOrderBook] = useState<OrderBookData | null>(null)
+  // Store both UP and DOWN orderbooks separately
+  const [upOrderBook, setUpOrderBook] = useState<OrderBookData | null>(null)
+  const [downOrderBook, setDownOrderBook] = useState<OrderBookData | null>(null)
   const [orderbookLoading, setOrderbookLoading] = useState(true)
   const [orderbookError, setOrderbookError] = useState<string | null>(null)
   const [currentMarketId, setCurrentMarketId] = useState<string | null>(null)
   const [hasScrolledToSpread, setHasScrolledToSpread] = useState(false)
+  const [isAutoCenteringEnabled, setIsAutoCenteringEnabled] = useState(true)
+  const isAutoCenteringRef = useRef(true) // Ref to track state for async callbacks
   const previousMarketIdRef = useRef<string | null>(null)
   const orderbookScrollContainerRef = useRef<HTMLDivElement | null>(null)
   const spreadCenterRef = useRef<HTMLDivElement | null>(null)
+  const userScrolledRef = useRef(false)
+  
+  // Get the active orderbook based on activeTokenId
+  const orderBook = activeTokenId === 'up' ? upOrderBook : downOrderBook
 
-  const fetchOrderbook = useCallback(async () => {
-    if (!market?.tokenId && !market?.slug) {
-      setOrderBook(null)
-      setOrderbookLoading(false)
-      setOrderbookError('No active market found')
-      setCurrentMarketId(null)
-      previousMarketIdRef.current = null
+  // Fetch orderbook for a specific token ID
+  const fetchOrderbookForToken = useCallback(async (tokenId: string, tokenType: 'up' | 'down') => {
+    if (!tokenId) return
+    
+    // Only fetch if this tokenId matches the current market
+    if (tokenType === 'up' && market?.yesTokenId && tokenId !== market.yesTokenId) {
+      console.log(`[OrderBook] Skipping ${tokenType} fetch - tokenId mismatch:`, {
+        requested: tokenId,
+        expected: market.yesTokenId,
+        currentMarketId: market.marketId,
+      })
       return
+    }
+    if (tokenType === 'down' && market?.noTokenId && tokenId !== market.noTokenId) {
+      console.log(`[OrderBook] Skipping ${tokenType} fetch - tokenId mismatch:`, {
+        requested: tokenId,
+        expected: market.noTokenId,
+        currentMarketId: market.marketId,
+      })
+      return
+    }
+
+    try {
+      const params = new URLSearchParams()
+      params.set('tokenId', tokenId)
+
+      console.log(`[OrderBook] Fetching ${tokenType} orderbook:`, {
+        tokenId: tokenId.substring(0, 20) + '...',
+        marketId: market?.marketId,
+      })
+
+      const orderbookResponse = await fetch(`/api/polymarket/orderbook?${params.toString()}`)
+
+      if (!orderbookResponse.ok) {
+        throw new Error(`Failed to fetch ${tokenType} orderbook: ${orderbookResponse.status}`)
+      }
+
+      const orderbookData = await orderbookResponse.json()
+      const normalized = normalizeOrderbookData(orderbookData)
+      
+      // Verify we still have the same market before updating
+      if (tokenType === 'up' && market?.yesTokenId && tokenId !== market.yesTokenId) {
+        console.log(`[OrderBook] Market changed during ${tokenType} fetch, ignoring update`)
+        return
+      }
+      if (tokenType === 'down' && market?.noTokenId && tokenId !== market.noTokenId) {
+        console.log(`[OrderBook] Market changed during ${tokenType} fetch, ignoring update`)
+        return
+      }
+      
+      const bestBid = normalized?.bids?.[0]?.price
+      const bestAsk = normalized?.asks?.[0]?.price
+      
+      console.log(`[OrderBook] ${tokenType} orderbook updated:`, {
+        marketId: market?.marketId,
+        bids: normalized?.bids?.length || 0,
+        asks: normalized?.asks?.length || 0,
+        bestBid: bestBid ? (bestBid > 1 ? (bestBid / 100).toFixed(2) : bestBid.toFixed(2)) : 'N/A',
+        bestAsk: bestAsk ? (bestAsk > 1 ? (bestAsk / 100).toFixed(2) : bestAsk.toFixed(2)) : 'N/A',
+      })
+
+      if (tokenType === 'up') {
+        setUpOrderBook(normalized)
+      } else {
+        setDownOrderBook(normalized)
+      }
+    } catch (err) {
+      console.error(`[OrderBook] Error fetching ${tokenType} orderbook:`, err)
+      if (tokenType === 'up') {
+        setUpOrderBook(null)
+      } else {
+        setDownOrderBook(null)
+      }
+    }
+  }, [market])
+
+  // Fetch both orderbooks on initial load or market change
+  const fetchBothOrderbooks = useCallback(async () => {
+    if (!market?.yesTokenId || !market?.noTokenId) {
+      if (!market?.slug) {
+        console.log('[OrderBook] No market data available, clearing orderbooks')
+        setUpOrderBook(null)
+        setDownOrderBook(null)
+        setOrderbookLoading(false)
+        setOrderbookError('No active market found')
+        setCurrentMarketId(null)
+        previousMarketIdRef.current = null
+        return
+      }
     }
 
     // Check if market changed
     const marketChanged = previousMarketIdRef.current !== null && previousMarketIdRef.current !== market.marketId
     if (marketChanged && market.marketId) {
-      console.log(`[OrderBook] Market changed: ${previousMarketIdRef.current} → ${market.marketId}, resetting orderbook`)
-      // Reset orderbook when market changes
-      setOrderBook(null)
+      console.log(`[OrderBook] Market changed: ${previousMarketIdRef.current} → ${market.marketId}, resetting orderbooks`)
+      setUpOrderBook(null)
+      setDownOrderBook(null)
       setOrderbookError(null)
+      setHasScrolledToSpread(false)
     }
     previousMarketIdRef.current = market.marketId ?? null
 
-    try {
-      setOrderbookLoading(true)
-      setOrderbookError(null)
-      
-      // Prefer using slug (exact Polymarket market) when available so we can
-      // resolve clobTokenIds from Gamma and fetch the authoritative orderbook
+    setOrderbookLoading(true)
+    setOrderbookError(null)
+    setCurrentMarketId(market.marketId ?? null)
+
+    console.log('[OrderBook] Fetching both orderbooks for market:', {
+      marketId: market.marketId,
+      upTokenId: market.yesTokenId?.substring(0, 20) + '...',
+      downTokenId: market.noTokenId?.substring(0, 20) + '...',
+    })
+
+    // Fetch both orderbooks in parallel
+    if (market.yesTokenId && market.noTokenId) {
+      await Promise.all([
+        fetchOrderbookForToken(market.yesTokenId, 'up'),
+        fetchOrderbookForToken(market.noTokenId, 'down'),
+      ])
+    } else if (market.slug) {
+      // Fallback: if we only have slug, fetch the default token
+      console.log('[OrderBook] Using slug fallback:', market.slug)
       const params = new URLSearchParams()
-      if (market.slug) {
-        params.set('slug', market.slug)
-      } else if (market.tokenId) {
-        params.set('tokenId', market.tokenId)
-      }
-
-      console.log('[OrderBook] Fetching orderbook with params:', {
-        marketId: market.marketId,
-        question: market.question,
-        slug: market.slug,
-        tokenId: market.tokenId,
-        query: params.toString(),
-      })
-
-      const orderbookResponse = await fetch(`/api/polymarket/orderbook?${params.toString()}`)
-
-        if (!orderbookResponse.ok) {
-          throw new Error('Failed to fetch orderbook')
+      params.set('slug', market.slug)
+      try {
+        const response = await fetch(`/api/polymarket/orderbook?${params.toString()}`)
+        if (response.ok) {
+          const data = await response.json()
+          const normalized = normalizeOrderbookData(data)
+          setUpOrderBook(normalized)
+          setDownOrderBook(normalized) // Use same data for both if we can't distinguish
         }
-
-        const orderbookData = await orderbookResponse.json()
-      console.log('[OrderBook] HTTP orderbook response:', {
-        hasBids: Array.isArray(orderbookData?.bids) ? orderbookData.bids.length : null,
-        hasAsks: Array.isArray(orderbookData?.asks) ? orderbookData.asks.length : null,
-      })
-      setCurrentMarketId(market.marketId ?? null)
-      setHasScrolledToSpread(false)
-      setOrderBook(normalizeOrderbookData(orderbookData))
       } catch (err) {
-        console.error('Error fetching orderbook:', err)
-      setOrderbookError(err instanceof Error ? err.message : 'Failed to load orderbook')
-      setOrderBook(null)
-      setCurrentMarketId(null)
-      setHasScrolledToSpread(false)
-    } finally {
-      setOrderbookLoading(false)
+        console.error('[OrderBook] Error fetching orderbook by slug:', err)
+      }
     }
-  }, [market])
 
+    setOrderbookLoading(false)
+  }, [market, fetchOrderbookForToken])
+
+  // Initial fetch of both orderbooks
   useEffect(() => {
     if (marketLoading) {
       return
     }
-    fetchOrderbook()
-    
-    // Poll HTTP API every 2 seconds to keep orderbook fresh (since WebSocket is disabled)
-    const pollInterval = setInterval(() => {
-      if (market?.tokenId || market?.slug) {
-        fetchOrderbook()
-      }
-    }, 2000)
-    
-    return () => clearInterval(pollInterval)
-  }, [fetchOrderbook, marketLoading, market?.tokenId, market?.slug])
+    fetchBothOrderbooks()
+  }, [fetchBothOrderbooks, marketLoading])
 
-  const handleMarketUpdate = useCallback(
-    (data: any) => {
-      // TEMPORARILY DISABLED: WebSocket orderbook updates are sending incorrect data (49/51c instead of 92/93c)
-      // The HTTP API route is working correctly, so we'll only use that for now
-      // TODO: Fix WebSocket service's fetchMultipleOrderbooks reverse logic, then re-enable
-      if (data?.type === 'orderbook_update' || data?.type === 'market_snapshot') {
-        console.log('[OrderBook] WebSocket orderbook updates temporarily disabled - using HTTP API only')
-        return
-      }
-    },
-    [market?.tokenId, market?.marketId]
-  )
+  // DISABLED: WebSocket orderbook updates - using HTTP polling instead to avoid flickering
+  // The WebSocket was receiving updates for multiple markets simultaneously, causing flickering
+  // between different markets. HTTP polling ensures we only get data for the current market.
+  // 
+  // useEffect(() => {
+  //   if (!isConnected || !market?.yesTokenId || !market?.noTokenId) {
+  //     return
+  //   }
 
+  //   console.log('[OrderBook] Subscribing to both token IDs via websocket:', {
+  //     upTokenId: market.yesTokenId,
+  //     downTokenId: market.noTokenId,
+  //   })
+
+  //   const unsubscribe = subscribeMarkets([market.yesTokenId, market.noTokenId], (data: any) => {
+  //     // Skip market_snapshot messages - they don't contain full orderbook data
+  //     if (data?.type === 'market_snapshot') {
+  //       console.log('[OrderBook] Ignoring market_snapshot (no full orderbook data)')
+  //       return
+  //     }
+      
+  //     if (data?.type === 'orderbook_update') {
+  //       const tokenId = data.marketId || data.tokenId
+  //       
+  //       // Only process updates for the current market's tokenIds
+  //       if (tokenId !== market.yesTokenId && tokenId !== market.noTokenId) {
+  //         console.log('[OrderBook] Ignoring orderbook_update for different tokenId:', tokenId)
+  //         return
+  //       }
+  //       
+  //       const orderbookData = normalizeOrderbookData(data)
+  //       
+  //       if (tokenId === market.yesTokenId) {
+  //         console.log('[OrderBook] Received UP orderbook update via websocket')
+  //         setUpOrderBook(orderbookData)
+  //       } else if (tokenId === market.noTokenId) {
+  //         console.log('[OrderBook] Received DOWN orderbook update via websocket')
+  //         setDownOrderBook(orderbookData)
+  //       }
+  //     }
+  //   })
+
+  //   return unsubscribe
+  // }, [isConnected, subscribeMarkets, market?.yesTokenId, market?.noTokenId])
+
+  // Poll HTTP API every 2 seconds to keep orderbooks fresh
+  // This is the PRIMARY source of orderbook data (WebSocket updates disabled to prevent flickering)
   useEffect(() => {
-    // TEMPORARILY DISABLED: WebSocket subscription for orderbook updates
-    // The WebSocket is sending incorrect data, so we're using HTTP API polling instead
-    // TODO: Re-enable after fixing WebSocket service's reverse logic
-    console.log('[OrderBook] WebSocket subscription disabled - using HTTP API only')
-    return () => {
-      // No-op cleanup
-    }
-  }, [market?.tokenId, handleMarketUpdate, isConnected, subscribeMarkets])
-
-  // Scroll so that the spread (center panel) is in view by default
-  useEffect(() => {
-    if (hasScrolledToSpread) {
+    if (marketLoading || !market?.yesTokenId || !market?.noTokenId) {
       return
     }
 
-    if (!orderBook) {
+    console.log('[OrderBook] Starting HTTP polling for orderbooks:', {
+      upTokenId: market.yesTokenId,
+      downTokenId: market.noTokenId,
+      marketId: market.marketId,
+    })
+
+    const pollInterval = setInterval(() => {
+      // Refresh both orderbooks via HTTP API
+      if (market.yesTokenId) {
+        fetchOrderbookForToken(market.yesTokenId, 'up')
+      }
+      if (market.noTokenId) {
+        fetchOrderbookForToken(market.noTokenId, 'down')
+      }
+    }, 2000)
+    
+    return () => {
+      console.log('[OrderBook] Stopping HTTP polling')
+      clearInterval(pollInterval)
+    }
+  }, [marketLoading, market?.yesTokenId, market?.noTokenId, market?.marketId, fetchOrderbookForToken])
+
+  // Function to center scroll to spread - ONLY works when forced or auto-centering is enabled
+  const centerToSpread = useCallback((useSmooth = false, force = false) => {
+    // CRITICAL: Check ref FIRST before doing anything
+    // If auto-centering is disabled and not forced, exit immediately
+    if (!force && !isAutoCenteringRef.current) {
+      console.log('[OrderBook] centerToSpread blocked - auto-centering disabled')
       return
     }
 
@@ -216,17 +345,207 @@ const OrderBook = () => {
       return
     }
 
-    const spreadOffsetTop = spreadElement.offsetTop - scrollContainer.offsetTop
-    const targetScrollTop =
-      spreadOffsetTop - scrollContainer.clientHeight / 2 + spreadElement.clientHeight / 2
+    // Capture the force flag for use in RAF
+    const shouldForce = force
 
-    scrollContainer.scrollTo({
-      top: Math.max(0, targetScrollTop),
-      behavior: 'auto',
+    // Use requestAnimationFrame for immediate positioning without delay
+    requestAnimationFrame(() => {
+      // CRITICAL: Re-check ref inside RAF - state might have changed
+      if (!shouldForce && !isAutoCenteringRef.current) {
+        console.log('[OrderBook] centerToSpread RAF blocked - auto-centering disabled')
+        return
+      }
+
+      const containerRect = scrollContainer.getBoundingClientRect()
+      const spreadRect = spreadElement.getBoundingClientRect()
+      
+      // Calculate the current scroll position
+      const currentScrollTop = scrollContainer.scrollTop
+      
+      // Calculate the position of the spread relative to the container's content
+      const spreadTopInContent = spreadRect.top - containerRect.top + currentScrollTop
+      
+      // Calculate the center position: element top - half container height + half element height
+      const containerHeight = scrollContainer.clientHeight
+      const spreadHeight = spreadElement.offsetHeight
+      const targetScrollTop = spreadTopInContent - (containerHeight / 2) + (spreadHeight / 2)
+
+      // Only scroll if we're not already centered (within 1px tolerance for stability)
+      const currentOffset = Math.abs(spreadRect.top + spreadRect.height / 2 - (containerRect.top + containerHeight / 2))
+      if (currentOffset > 1) {
+        scrollContainer.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: useSmooth ? 'smooth' : 'auto',
+        })
+      }
+
+      setHasScrolledToSpread(true)
+    })
+  }, []) // No dependencies - uses refs for current values
+
+  // Toggle auto-centering on/off
+  const toggleAutoCenter = useCallback(() => {
+    setIsAutoCenteringEnabled((prev) => {
+      const newValue = !prev
+      // Update ref IMMEDIATELY so all async callbacks see the new value
+      isAutoCenteringRef.current = newValue
+      console.log('[OrderBook] Auto-centering toggled:', newValue ? 'ENABLED' : 'DISABLED')
+      
+      if (newValue) {
+        // When re-enabling, center immediately and reset user scroll flag
+        userScrolledRef.current = false
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            centerToSpread(false, true) // Force center when re-enabling
+          })
+        })
+      }
+      return newValue
+    })
+  }, [centerToSpread])
+
+  // Keep ref in sync with state (for any code paths that update state directly)
+  useEffect(() => {
+    isAutoCenteringRef.current = isAutoCenteringEnabled
+  }, [isAutoCenteringEnabled])
+
+  // Expose functions via ref
+  useImperativeHandle(ref, () => ({
+    centerToSpread: () => centerToSpread(true, true), // Force center when called manually
+    toggleAutoCenter,
+    isAutoCentering: () => isAutoCenteringEnabled,
+  }), [centerToSpread, toggleAutoCenter, isAutoCenteringEnabled])
+
+  // Always keep the spread centered - re-center whenever orderbook updates (only if auto-centering is enabled)
+  // Use multiple requestAnimationFrame calls to ensure DOM is fully updated
+  useEffect(() => {
+    // CRITICAL: Exit immediately if auto-centering is disabled
+    if (!isAutoCenteringEnabled) {
+      return
+    }
+
+    if (!orderBook || !orderBook.bids?.length || !orderBook.asks?.length) {
+      return
+    }
+
+    // Track if this effect is still active (for cleanup)
+    let isActive = true
+
+    // Only auto-center if user hasn't manually scrolled
+    if (!userScrolledRef.current) {
+      // Use triple RAF to ensure DOM updates, layout, and paint are complete
+      requestAnimationFrame(() => {
+        if (!isActive || !isAutoCenteringRef.current) return
+        requestAnimationFrame(() => {
+          if (!isActive || !isAutoCenteringRef.current) return
+          requestAnimationFrame(() => {
+            if (!isActive || !isAutoCenteringRef.current) return
+            centerToSpread(false)
+          })
+        })
+      })
+    }
+
+    // Cleanup: mark as inactive when effect is re-run or unmounted
+    return () => {
+      isActive = false
+    }
+  }, [orderBook, centerToSpread, isAutoCenteringEnabled])
+
+  // Initial centering when orderbook first becomes available (only if auto-centering is enabled)
+  useEffect(() => {
+    // CRITICAL: Exit immediately if auto-centering is disabled
+    if (!isAutoCenteringEnabled) {
+      return
+    }
+
+    if (!orderBook || !orderBook.bids?.length || !orderBook.asks?.length || hasScrolledToSpread) {
+      return
+    }
+
+    // Track if this effect is still active (for cleanup)
+    let isActive = true
+
+    // Use triple RAF for initial centering to ensure everything is rendered
+    requestAnimationFrame(() => {
+      if (!isActive || !isAutoCenteringRef.current) return
+      requestAnimationFrame(() => {
+        if (!isActive || !isAutoCenteringRef.current) return
+        requestAnimationFrame(() => {
+          if (!isActive || !isAutoCenteringRef.current) return
+          centerToSpread(false)
+        })
+      })
     })
 
-    setHasScrolledToSpread(true)
-  }, [orderBook, hasScrolledToSpread])
+    // Cleanup: mark as inactive when effect is re-run or unmounted
+    return () => {
+      isActive = false
+    }
+  }, [orderBook, hasScrolledToSpread, centerToSpread, isAutoCenteringEnabled])
+
+  // Lock scroll position to keep spread centered - re-center immediately if user scrolls away (only if auto-centering is enabled)
+  useEffect(() => {
+    // CRITICAL: If auto-centering is disabled, do NOTHING - let user scroll freely
+    if (!isAutoCenteringEnabled) {
+      console.log('[OrderBook] Scroll lock effect skipped - auto-centering disabled')
+      return
+    }
+
+    const scrollContainer = orderbookScrollContainerRef.current
+    if (!scrollContainer || !orderBook || !orderBook.bids?.length || !orderBook.asks?.length) {
+      return
+    }
+
+    console.log('[OrderBook] Scroll lock effect active - auto-centering enabled')
+
+    // Track if this effect instance is still active
+    let isActive = true
+    let rafId: number | null = null
+
+    const handleScroll = () => {
+      // Triple-check: effect still active AND auto-centering enabled
+      if (!isActive || !isAutoCenteringRef.current) {
+        return
+      }
+
+      // Cancel any pending RAF
+      if (rafId) {
+        cancelAnimationFrame(rafId)
+      }
+
+      rafId = requestAnimationFrame(() => {
+        // Check again inside RAF
+        if (!isActive || !isAutoCenteringRef.current) return
+
+        const spreadElement = spreadCenterRef.current
+        if (!spreadElement) return
+
+        const containerRect = scrollContainer.getBoundingClientRect()
+        const spreadRect = spreadElement.getBoundingClientRect()
+        
+        const spreadCenterY = spreadRect.top + spreadRect.height / 2
+        const containerCenterY = containerRect.top + containerRect.height / 2
+        const offsetFromCenter = Math.abs(spreadCenterY - containerCenterY)
+
+        // If spread deviates more than 5px from center, re-center it
+        if (offsetFromCenter > 5) {
+          centerToSpread(false)
+        }
+      })
+    }
+
+    scrollContainer.addEventListener('scroll', handleScroll, { passive: true })
+
+    return () => {
+      console.log('[OrderBook] Scroll lock effect cleanup')
+      isActive = false
+      scrollContainer.removeEventListener('scroll', handleScroll)
+      if (rafId) {
+        cancelAnimationFrame(rafId)
+      }
+    }
+  }, [orderBook, centerToSpread, isAutoCenteringEnabled])
 
   if (marketLoading || orderbookLoading) {
     return (
@@ -265,13 +584,14 @@ const OrderBook = () => {
   } else if (orderBook.bids || orderBook.asks) {
     bids = orderBook.bids || []
     asks = orderBook.asks || []
-  } else if (orderBook.buyOrders || orderBook.sellOrders) {
-    bids = orderBook.buyOrders || []
-    asks = orderBook.sellOrders || []
-  } else if (orderBook.data) {
+  } else if ((orderBook as any).buyOrders || (orderBook as any).sellOrders) {
+    bids = (orderBook as any).buyOrders || []
+    asks = (orderBook as any).sellOrders || []
+  } else if ((orderBook as any).data) {
     // Nested data structure
-    bids = orderBook.data.bids || orderBook.data.buyOrders || []
-    asks = orderBook.data.asks || orderBook.data.sellOrders || []
+    const data = (orderBook as any).data
+    bids = data.bids || data.buyOrders || []
+    asks = data.asks || data.sellOrders || []
   }
 
   // Normalize price format (Polymarket may return prices as cents or decimals)
@@ -393,7 +713,9 @@ const OrderBook = () => {
       </div>
     </div>
   )
-}
+})
+
+OrderBook.displayName = 'OrderBook'
 
 export default OrderBook
 

@@ -8,7 +8,7 @@ import useCurrentMarket from '@/hooks/useCurrentMarket'
 
 
 const TradingPanel = () => {
-  const { selectedPair, selectedTimeframe } = useTradingContext()
+  const { selectedPair, selectedTimeframe, activeTokenId, setActiveTokenId } = useTradingContext()
   const [orderType, setOrderType] = useState<'market' | 'strategy' | 'analytics'>('market')
   const [executionType, setExecutionType] = useState<'market' | 'limit'>('market')
   const [amount, setAmount] = useState('')
@@ -94,7 +94,7 @@ const TradingPanel = () => {
   }
 
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
+    const handleMouseMove = (e: globalThis.MouseEvent) => {
       if (!isDragging || !popupRef.current) return
       
       const newX = e.clientX - dragOffset.x
@@ -530,6 +530,7 @@ const TradingPanel = () => {
                   onClick={() => {
                     setIsBuy(true)
                     setSelectedOutcome('up')
+                    setActiveTokenId('up')
                     const upPrice = parseFloat(yesPriceFormatted) || 0
                     setLimitPrice(upPrice.toFixed(1))
                   }}
@@ -547,6 +548,7 @@ const TradingPanel = () => {
                   onClick={() => {
                     setIsBuy(true)
                     setSelectedOutcome('down')
+                    setActiveTokenId('down')
                     const downPrice = parseFloat(noPriceFormatted) || 0
                     setLimitPrice(downPrice.toFixed(1))
                   }}
@@ -567,6 +569,7 @@ const TradingPanel = () => {
                   onClick={() => {
                     setIsBuy(false)
                     setSelectedOutcome('up')
+                    setActiveTokenId('up')
                     const upPrice = parseFloat(yesSellPriceFormatted) || 0
                     setLimitPrice(upPrice.toFixed(1))
                   }}
@@ -584,6 +587,7 @@ const TradingPanel = () => {
                   onClick={() => {
                     setIsBuy(false)
                     setSelectedOutcome('down')
+                    setActiveTokenId('down')
                     const downPrice = parseFloat(noSellPriceFormatted) || 0
                     setLimitPrice(downPrice.toFixed(1))
                   }}
@@ -659,6 +663,7 @@ const TradingPanel = () => {
                   onClick={() => {
                     setIsBuy(true)
                     setSelectedOutcome('up')
+                    setActiveTokenId('up')
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
                     selectedOutcome === 'up' ? 'bg-green-500/10 border-green-500 text-green-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-green-500/60'
@@ -674,6 +679,7 @@ const TradingPanel = () => {
                   onClick={() => {
                     setIsBuy(true)
                     setSelectedOutcome('down')
+                    setActiveTokenId('down')
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
                     selectedOutcome === 'down' ? 'bg-red-500/10 border-red-500 text-red-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-red-500/60'
@@ -692,6 +698,7 @@ const TradingPanel = () => {
                   onClick={() => {
                     setIsBuy(false)
                     setSelectedOutcome('up')
+                    setActiveTokenId('up')
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
                     selectedOutcome === 'up' ? 'bg-green-500/10 border-green-500 text-green-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-green-500/60'
@@ -707,6 +714,7 @@ const TradingPanel = () => {
                   onClick={() => {
                     setIsBuy(false)
                     setSelectedOutcome('down')
+                    setActiveTokenId('down')
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
                     selectedOutcome === 'down' ? 'bg-red-500/10 border-red-500 text-red-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-red-500/60'
