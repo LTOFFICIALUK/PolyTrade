@@ -1,0 +1,37 @@
+# Docker Compose for local development
+# This runs TimescaleDB (PostgreSQL with time-series extension) locally
+# 
+# To start: docker-compose up -d
+# To stop: docker-compose down
+# To view logs: docker-compose logs -f timescaledb
+# To access database: docker-compose exec timescaledb psql -U polytrade -d polytrade
+
+version: '3.8'
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: polytrade-timescaledb
+    ports:
+      - "5432:5432"  # PostgreSQL port
+    environment:
+      POSTGRES_USER: polytrade
+      POSTGRES_PASSWORD: polytrade_dev_password  # Change this in production!
+      POSTGRES_DB: polytrade
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      # Persist data between container restarts
+      - timescaledb_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polytrade"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  timescaledb_data:
+    # This volume persists on your local machine
+    # Location: ~/Library/Containers/com.docker.docker/Data/vms/0/data (on Mac)
+    # On VPS, you'll need to backup/restore this volume
+

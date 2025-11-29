@@ -27,6 +27,10 @@ yarn-error.log*
 # local env files
 .env*.local
 
+# database backups
+*.sql
+!database/migrations/*.sql
+
 # vercel
 .vercel
 

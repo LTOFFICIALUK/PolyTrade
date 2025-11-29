@@ -3,10 +3,14 @@
  * Main server that coordinates Polymarket connector, state store, and WebSocket server
  */
 
+// Load environment variables from .env file
+import 'dotenv/config'
+
 import http from 'http'
 import { WebSocketServer } from './ws/server'
 import { MarketsStateStore } from './state/marketsState'
 import { fetchMarketsList, fetchOrderbook, fetchMultipleOrderbooks, fetchMarketBySlug, MarketMetadata } from './polymarket/clobClient'
+import { initializePriceRecorder, recordPrice, closePriceRecorder } from './db/priceRecorder'
 
 const POLYMARKET_GAMMA_API = process.env.POLYMARKET_GAMMA_API || 'https://gamma-api.polymarket.com'
 
@@ -1268,13 +1272,22 @@ function startOrderbookPolling(wsServer: WebSocketServer, markets: any[]): void 
     const marketMap = new Map<string, typeof marketsToPoll[0]>()
     const subscribedTokenIds = new Set<string>()
     
-    // First, collect tokenIds from filtered markets
+    // First, collect tokenIds from filtered markets (both UP and DOWN tokens)
     for (const marketState of marketsToPoll) {
       const metadata = marketState.metadata
-      const primaryTokenId = metadata?.yesTokenId || metadata?.tokenId || metadata?.tokenIds?.[0]
-      if (primaryTokenId) {
-        tokenIds.push(primaryTokenId)
-        marketMap.set(primaryTokenId, marketState)
+      const upTokenId = metadata?.yesTokenId || metadata?.tokenId || metadata?.tokenIds?.[0]
+      const downTokenId = metadata?.noTokenId || metadata?.tokenIds?.[1]
+      
+      // Add UP token
+      if (upTokenId) {
+        tokenIds.push(upTokenId)
+        marketMap.set(upTokenId, marketState)
+      }
+      
+      // Add DOWN token (if available)
+      if (downTokenId) {
+        tokenIds.push(downTokenId)
+        marketMap.set(downTokenId, marketState)
       }
     }
     
@@ -1329,6 +1342,12 @@ function startOrderbookPolling(wsServer: WebSocketServer, markets: any[]): void 
               bestBid,
               bestAsk,
             })
+          }
+          
+          // Record price to database (non-blocking, fire-and-forget)
+          // We record each token's price individually as it comes in
+          if (marketState) {
+            recordPrice(marketId, tokenId, bestBid, bestAsk)
           }
           
           // Only broadcast if there are subscribers for this tokenId/marketId
@@ -1497,6 +1516,9 @@ function startAutomaticMarketRefresh() {
   }, 60 * 1000) // 1 minute after startup
 }
 
+// Initialize price recorder (database connection)
+initializePriceRecorder()
+
 // Start server
 httpServer.listen(HTTP_PORT, () => {
   console.log(`[Server] HTTP server listening on http://localhost:${HTTP_PORT}`)
@@ -1511,18 +1533,20 @@ httpServer.listen(HTTP_PORT, () => {
 })
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('[Server] SIGTERM received, shutting down gracefully...')
-  httpServer.close(() => {
+  httpServer.close(async () => {
     console.log('[Server] HTTP server closed')
+    await closePriceRecorder()
     process.exit(0)
   })
 })
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('[Server] SIGINT received, shutting down gracefully...')
-  httpServer.close(() => {
+  httpServer.close(async () => {
     console.log('[Server] HTTP server closed')
+    await closePriceRecorder()
     process.exit(0)
   })
 })
