@@ -1,49 +1,74 @@
 # How to Start PolyTrade Servers
 
-Simple step-by-step guide to start both servers.
+Simple step-by-step guide. Copy and paste each command exactly as shown.
 
-## Step 1: Check if Ports Are Already in Use
+---
 
-Open Terminal and run:
+## Step 1: Check and Kill Any Running Servers
+
+Open Terminal and copy/paste these commands one at a time:
 
 ```bash
 lsof -i :8081
+```
+
+**If you see output with numbers:**
+- Look for the number in the second column (the PID)
+- Copy this command and replace `XXXX` with that number:
+```bash
+kill -9 XXXX
+```
+
+Then check port 3000:
+```bash
 lsof -i :3000
 ```
 
-**If you see output:**
-- Copy the **PID number** (the number in the second column)
-- Run: `kill -9 <PID>` (replace `<PID>` with the number you copied)
-- Repeat for each process
+**If you see output with numbers:**
+- Look for the number in the second column (the PID)
+- Copy this command and replace `XXXX` with that number:
+```bash
+kill -9 XXXX
+```
 
-**If you see no output:**
+**If you see "no matching processes" or nothing:**
 - Ports are free, continue to Step 2
 
 ---
 
-## Step 2: Start the WebSocket Service
+## Step 2: Start WebSocket Service
 
-Open a **new Terminal window** and run:
+Open a **new Terminal window** (keep the old one open or close it).
+
+Copy and paste these commands one at a time:
 
 ```bash
 cd /Users/lukecarter/Downloads/PolyTrade-main/ws-service
+```
+
+```bash
 HTTP_PORT=8081 npm run dev
 ```
 
-**Wait until you see:**
+**Wait until you see these messages:**
 - `[Server] HTTP server listening on http://localhost:8081`
 - `[Server] WebSocket server listening on ws://localhost:8081/ws`
 
-**Keep this terminal window open.**
+**Important:** Keep this terminal window open and running.
 
 ---
 
-## Step 3: Start Next.js
+## Step 3: Start Next.js (Frontend)
 
-Open **another new Terminal window** and run:
+Open **another new Terminal window**.
+
+Copy and paste these commands one at a time:
 
 ```bash
 cd /Users/lukecarter/Downloads/PolyTrade-main
+```
+
+```bash
 npm run dev
 ```
 
@@ -51,13 +76,13 @@ npm run dev
 - `✓ Ready in X seconds`
 - `○ Local: http://localhost:3000`
 
-**Keep this terminal window open.**
+**Important:** Keep this terminal window open and running.
 
 ---
 
-## Step 4: Verify Everything Works
+## Step 4: Open in Browser
 
-Open your browser and go to:
+Open your web browser and go to:
 
 ```
 http://localhost:3000
@@ -67,43 +92,79 @@ You should see the PolyTrade homepage.
 
 ---
 
-## Quick Troubleshooting
+## Troubleshooting
 
-**If port 8081 is busy:**
+### Port 8081 is busy?
+
+Copy and paste these commands:
+
 ```bash
 lsof -i :8081
-kill -9 <PID>
 ```
 
-**If port 3000 is busy:**
+Find the PID number (second column), then:
+
+```bash
+kill -9 XXXX
+```
+(Replace XXXX with the PID number)
+
+### Port 3000 is busy?
+
+Copy and paste these commands:
+
 ```bash
 lsof -i :3000
-kill -9 <PID>
 ```
 
-**To check if servers are running:**
+Find the PID number (second column), then:
+
+```bash
+kill -9 XXXX
+```
+(Replace XXXX with the PID number)
+
+### Check if servers are running?
+
+Copy and paste:
+
 ```bash
 curl http://localhost:8081/health
+```
+
+Should show: `{"status":"ok"}`
+
+```bash
 curl http://localhost:3000
 ```
 
+Should show HTML (lots of text).
+
 ---
 
-## Summary
+## Quick Reference
 
-You need **2 terminal windows**:
+**You need 2 terminal windows:**
 
-1. **Terminal 1** - WebSocket Service:
-   ```bash
-   cd /Users/lukecarter/Downloads/PolyTrade-main/ws-service
-   HTTP_PORT=8081 npm run dev
-   ```
+**Terminal 1 - WebSocket Service:**
+```bash
+cd /Users/lukecarter/Downloads/PolyTrade-main/ws-service
+HTTP_PORT=8081 npm run dev
+```
 
-2. **Terminal 2** - Next.js:
-   ```bash
-   cd /Users/lukecarter/Downloads/PolyTrade-main
-   npm run dev
-   ```
+**Terminal 2 - Next.js Frontend:**
+```bash
+cd /Users/lukecarter/Downloads/PolyTrade-main
+npm run dev
+```
 
 Then open: `http://localhost:3000` in your browser.
 
+---
+
+## Notes
+
+- Copy commands exactly as shown (including the `cd` commands)
+- Don't copy the `bash` part - that's just showing it's a bash command
+- Keep both terminal windows open while using the app
+- If you close a terminal, that server stops running
