@@ -8,7 +8,7 @@ import useCurrentMarket from '@/hooks/useCurrentMarket'
 
 
 const TradingPanel = () => {
-  const { selectedPair, selectedTimeframe, activeTokenId, setActiveTokenId } = useTradingContext()
+  const { selectedPair, selectedTimeframe, activeTokenId, setActiveTokenId, marketOffset } = useTradingContext()
   const [orderType, setOrderType] = useState<'market' | 'strategy' | 'analytics'>('market')
   const [executionType, setExecutionType] = useState<'market' | 'limit'>('market')
   const [amount, setAmount] = useState('')
@@ -144,6 +144,7 @@ const TradingPanel = () => {
   } = useCurrentMarket({
     pair: selectedPair,
     timeframe: selectedTimeframe,
+    offset: marketOffset,
   })
 
   // Get real-time Polymarket prices with minimal delay
@@ -207,23 +208,36 @@ const TradingPanel = () => {
     return () => clearInterval(interval)
   }, [currentMarket?.yesTokenId, currentMarket?.noTokenId])
 
+  // Check if market is past (ended)
+  const isMarketEnded = currentMarket.isPast === true || currentMarket.marketStatus === 'ended'
+
   // Use orderbook prices if available, fallback to pricing API
-  const yesPriceFormatted = orderbookPrices.upBestAsk !== null 
-    ? orderbookPrices.upBestAsk.toFixed(1)
-    : (error || !prices ? 'ERROR' : (prices.yesPrice * 100).toFixed(1))
+  // Format as whole cents (no decimals)
+  // For ended markets, show "Ended" instead of prices
+  const yesPriceFormatted = isMarketEnded 
+    ? 'Ended'
+    : orderbookPrices.upBestAsk !== null 
+      ? Math.round(orderbookPrices.upBestAsk).toString()
+      : (error || !prices ? 'ERROR' : Math.round(prices.yesPrice * 100).toString())
   
-  const noPriceFormatted = orderbookPrices.downBestAsk !== null
-    ? orderbookPrices.downBestAsk.toFixed(1)
-    : (error || !prices ? 'ERROR' : (prices.noPrice * 100).toFixed(1))
+  const noPriceFormatted = isMarketEnded
+    ? 'Ended'
+    : orderbookPrices.downBestAsk !== null
+      ? Math.round(orderbookPrices.downBestAsk).toString()
+      : (error || !prices ? 'ERROR' : Math.round(prices.noPrice * 100).toString())
 
   // For sell buttons, use best bid (what you'd get when selling)
-  const yesSellPriceFormatted = orderbookPrices.upBestBid !== null
-    ? orderbookPrices.upBestBid.toFixed(1)
-    : (error || !prices ? 'ERROR' : (prices.yesPrice * 100).toFixed(1))
+  const yesSellPriceFormatted = isMarketEnded
+    ? 'Ended'
+    : orderbookPrices.upBestBid !== null
+      ? Math.round(orderbookPrices.upBestBid).toString()
+      : (error || !prices ? 'ERROR' : Math.round(prices.yesPrice * 100).toString())
   
-  const noSellPriceFormatted = orderbookPrices.downBestBid !== null
-    ? orderbookPrices.downBestBid.toFixed(1)
-    : (error || !prices ? 'ERROR' : (prices.noPrice * 100).toFixed(1))
+  const noSellPriceFormatted = isMarketEnded
+    ? 'Ended'
+    : orderbookPrices.downBestBid !== null
+      ? Math.round(orderbookPrices.downBestBid).toString()
+      : (error || !prices ? 'ERROR' : Math.round(prices.noPrice * 100).toString())
 
   // Determine if we're trading UP (green) or DOWN (red) - uses shared outcome
   const isTradingUp = selectedOutcome === 'up'
@@ -532,7 +546,7 @@ const TradingPanel = () => {
                     setSelectedOutcome('up')
                     setActiveTokenId('up')
                     const upPrice = parseFloat(yesPriceFormatted) || 0
-                    setLimitPrice(upPrice.toFixed(1))
+                    setLimitPrice(Math.round(upPrice).toString())
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
                     selectedOutcome === 'up' ? 'bg-green-500/10 border-green-500 text-green-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-green-500/60'
@@ -550,7 +564,7 @@ const TradingPanel = () => {
                     setSelectedOutcome('down')
                     setActiveTokenId('down')
                     const downPrice = parseFloat(noPriceFormatted) || 0
-                    setLimitPrice(downPrice.toFixed(1))
+                    setLimitPrice(Math.round(downPrice).toString())
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
                     selectedOutcome === 'down' ? 'bg-red-500/10 border-red-500 text-red-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-red-500/60'
@@ -571,7 +585,7 @@ const TradingPanel = () => {
                     setSelectedOutcome('up')
                     setActiveTokenId('up')
                     const upPrice = parseFloat(yesSellPriceFormatted) || 0
-                    setLimitPrice(upPrice.toFixed(1))
+                    setLimitPrice(Math.round(upPrice).toString())
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
                     selectedOutcome === 'up' ? 'bg-green-500/10 border-green-500 text-green-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-green-500/60'
@@ -589,7 +603,7 @@ const TradingPanel = () => {
                     setSelectedOutcome('down')
                     setActiveTokenId('down')
                     const downPrice = parseFloat(noSellPriceFormatted) || 0
-                    setLimitPrice(downPrice.toFixed(1))
+                    setLimitPrice(Math.round(downPrice).toString())
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
                     selectedOutcome === 'down' ? 'bg-red-500/10 border-red-500 text-red-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-red-500/60'
@@ -611,8 +625,8 @@ const TradingPanel = () => {
               <button
                 onClick={() => {
                   const current = parseFloat(limitPrice) || 0
-                  const newPrice = Math.max(0, current - 0.1)
-                  setLimitPrice(newPrice.toFixed(1))
+                  const newPrice = Math.max(0, current - 1)
+                  setLimitPrice(Math.round(newPrice).toString())
                 }}
                 className="px-3 py-2 text-gray-400 hover:text-white transition-colors"
                 aria-label="Decrease price"
@@ -626,7 +640,7 @@ const TradingPanel = () => {
                   type="text"
                   value={limitPrice}
                   onChange={(e) => {
-                    const value = e.target.value.replace(/[^0-9.]/g, '')
+                    const value = e.target.value.replace(/[^0-9]/g, '')
                     setLimitPrice(value)
                   }}
                   className="w-full bg-gray-900/50 border border-gray-800 rounded px-3 py-2 pr-8 text-white text-sm font-semibold text-center focus:outline-none focus:ring-2 focus:ring-purple-primary"
@@ -637,8 +651,8 @@ const TradingPanel = () => {
               <button
                 onClick={() => {
                   const current = parseFloat(limitPrice) || 0
-                  const newPrice = Math.min(100, current + 0.1)
-                  setLimitPrice(newPrice.toFixed(1))
+                  const newPrice = Math.min(100, current + 1)
+                  setLimitPrice(Math.round(newPrice).toString())
                 }}
                 className="px-3 py-2 text-gray-400 hover:text-white transition-colors"
                 aria-label="Increase price"
@@ -654,40 +668,48 @@ const TradingPanel = () => {
 
       {/* Buy/Sell Toggle - only shown when executionType is 'market' */}
       {executionType === 'market' && (
-        <div className="border-b border-gray-800 p-4 flex-shrink-0">
+        <div className={`border-b border-gray-800 p-4 flex-shrink-0 ${isMarketEnded ? 'opacity-50' : ''}`}>
           <div className="flex gap-2">
             {isBuy ? (
               <>
                 {/* Buy Up Button */}
                 <button
+                  disabled={isMarketEnded}
                   onClick={() => {
+                    if (isMarketEnded) return
                     setIsBuy(true)
                     setSelectedOutcome('up')
                     setActiveTokenId('up')
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
-                    selectedOutcome === 'up' ? 'bg-green-500/10 border-green-500 text-green-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-green-500/60'
+                    isMarketEnded
+                      ? 'bg-gray-800/50 border-gray-700 text-gray-500 cursor-not-allowed'
+                      : selectedOutcome === 'up' ? 'bg-green-500/10 border-green-500 text-green-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-green-500/60'
                   }`}
                 >
                   <span>Buy Up</span>
-                  <span className={`text-xs font-semibold ${selectedOutcome === 'up' ? 'text-green-400' : 'text-gray-400'}`}>
-                    {yesPriceFormatted}¢
+                  <span className={`text-xs font-semibold ${isMarketEnded ? 'text-gray-500' : selectedOutcome === 'up' ? 'text-green-400' : 'text-gray-400'}`}>
+                    {isMarketEnded ? 'Ended' : `${yesPriceFormatted}¢`}
                   </span>
                 </button>
                 {/* Buy Down Button */}
                 <button
+                  disabled={isMarketEnded}
                   onClick={() => {
+                    if (isMarketEnded) return
                     setIsBuy(true)
                     setSelectedOutcome('down')
                     setActiveTokenId('down')
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
-                    selectedOutcome === 'down' ? 'bg-red-500/10 border-red-500 text-red-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-red-500/60'
+                    isMarketEnded
+                      ? 'bg-gray-800/50 border-gray-700 text-gray-500 cursor-not-allowed'
+                      : selectedOutcome === 'down' ? 'bg-red-500/10 border-red-500 text-red-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-red-500/60'
                   }`}
                 >
                   <span>Buy Down</span>
-                  <span className={`text-xs font-semibold ${selectedOutcome === 'down' ? 'text-red-400' : 'text-gray-400'}`}>
-                    {noPriceFormatted}¢
+                  <span className={`text-xs font-semibold ${isMarketEnded ? 'text-gray-500' : selectedOutcome === 'down' ? 'text-red-400' : 'text-gray-400'}`}>
+                    {isMarketEnded ? 'Ended' : `${noPriceFormatted}¢`}
                   </span>
                 </button>
               </>
@@ -695,34 +717,42 @@ const TradingPanel = () => {
               <>
                 {/* Sell Up Button */}
                 <button
+                  disabled={isMarketEnded}
                   onClick={() => {
+                    if (isMarketEnded) return
                     setIsBuy(false)
                     setSelectedOutcome('up')
                     setActiveTokenId('up')
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
-                    selectedOutcome === 'up' ? 'bg-green-500/10 border-green-500 text-green-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-green-500/60'
+                    isMarketEnded
+                      ? 'bg-gray-800/50 border-gray-700 text-gray-500 cursor-not-allowed'
+                      : selectedOutcome === 'up' ? 'bg-green-500/10 border-green-500 text-green-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-green-500/60'
                   }`}
                 >
                   <span>Sell Up</span>
-                  <span className={`text-xs font-semibold ${selectedOutcome === 'up' ? 'text-green-400' : 'text-gray-400'}`}>
-                    {yesSellPriceFormatted}¢
+                  <span className={`text-xs font-semibold ${isMarketEnded ? 'text-gray-500' : selectedOutcome === 'up' ? 'text-green-400' : 'text-gray-400'}`}>
+                    {isMarketEnded ? 'Ended' : `${yesSellPriceFormatted}¢`}
                   </span>
                 </button>
                 {/* Sell Down Button */}
                 <button
+                  disabled={isMarketEnded}
                   onClick={() => {
+                    if (isMarketEnded) return
                     setIsBuy(false)
                     setSelectedOutcome('down')
                     setActiveTokenId('down')
                   }}
                   className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold rounded-lg transition-all duration-200 uppercase flex items-center justify-between border ${
-                    selectedOutcome === 'down' ? 'bg-red-500/10 border-red-500 text-red-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-red-500/60'
+                    isMarketEnded
+                      ? 'bg-gray-800/50 border-gray-700 text-gray-500 cursor-not-allowed'
+                      : selectedOutcome === 'down' ? 'bg-red-500/10 border-red-500 text-red-400' : 'bg-gray-900/50 border-gray-700 text-gray-200 hover:border-red-500/60'
                   }`}
                 >
                   <span>Sell Down</span>
-                  <span className={`text-xs font-semibold ${selectedOutcome === 'down' ? 'text-red-400' : 'text-gray-400'}`}>
-                    {noSellPriceFormatted}¢
+                  <span className={`text-xs font-semibold ${isMarketEnded ? 'text-gray-500' : selectedOutcome === 'down' ? 'text-red-400' : 'text-gray-400'}`}>
+                    {isMarketEnded ? 'Ended' : `${noSellPriceFormatted}¢`}
                   </span>
                 </button>
               </>
@@ -878,15 +908,20 @@ const TradingPanel = () => {
       {/* Main Action Button */}
       <div className="p-4 flex-shrink-0 space-y-3">
         <button
+          disabled={isMarketEnded}
           className={`w-full py-3 rounded-lg font-bold text-sm transition-all duration-200 border ${
-            isTradingUp
-              ? 'bg-green-500/10 border-green-500 text-green-400 hover:bg-green-500/20'
-              : 'bg-red-500/10 border-red-500 text-red-400 hover:bg-red-500/20'
+            isMarketEnded
+              ? 'bg-gray-800/50 border-gray-700 text-gray-500 cursor-not-allowed'
+              : isTradingUp
+                ? 'bg-green-500/10 border-green-500 text-green-400 hover:bg-green-500/20'
+                : 'bg-red-500/10 border-red-500 text-red-400 hover:bg-red-500/20'
           }`}
         >
-          {executionType === 'limit'
-            ? `${isBuy ? 'BUY' : 'SELL'} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'} @ LIMIT`
-            : `${isBuy ? 'BUY' : 'SELL'} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'}`}
+          {isMarketEnded
+            ? 'MARKET ENDED'
+            : executionType === 'limit'
+              ? `${isBuy ? 'BUY' : 'SELL'} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'} @ LIMIT`
+              : `${isBuy ? 'BUY' : 'SELL'} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'}`}
         </button>
 
         <div className="rounded-lg border border-gray-800 bg-gray-900/40 px-3 py-2 text-xs text-gray-400 space-y-1">
@@ -928,28 +963,6 @@ const TradingPanel = () => {
         </div>
       </div>
 
-      {/* Account Summary */}
-      <div className="border-t border-gray-800 p-4 mt-auto flex-shrink-0">
-        <div className="bg-gray-900/50 rounded p-3 border border-gray-800 space-y-2.5">
-          <div className="flex justify-between items-center">
-            <span className="text-xs text-gray-400">Bought</span>
-            <span className="text-sm text-white font-bold">$0</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-xs text-gray-400">Sold</span>
-            <span className="text-sm text-white font-bold">$79.15</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-xs text-gray-400">Holding</span>
-            <span className="text-sm text-white font-bold">$44.6</span>
-          </div>
-          <div className="h-px bg-gray-800 my-2" />
-          <div className="flex justify-between items-center pt-1">
-            <span className="text-xs text-gray-400">PnL</span>
-            <span className="text-sm text-green-400 font-bold">+$123.8 (+0%)</span>
-          </div>
-        </div>
-      </div>
 
       {/* Quick Limit Popup - Draggable */}
       {showQuickTradePanel && (

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState, useRef } from 'react'
 interface UseCurrentMarketParams {
   pair: string
   timeframe: string
+  offset?: number // Market offset: 0 = current, -1 = previous, +1 = next
 }
 
 export interface CurrentMarketData {
@@ -17,11 +18,17 @@ export interface CurrentMarketData {
   noTokenId?: string | null
   tokenId?: string | null
   polymarketUrl?: string | null
+  // Market status fields (for past/future markets)
+  marketStatus?: 'ended' | 'upcoming' | 'live' | null
+  isPast?: boolean
+  isFuture?: boolean
+  isLive?: boolean
+  offset?: number
 }
 
 const defaultState: CurrentMarketData = { marketId: null }
 
-const useCurrentMarket = ({ pair, timeframe }: UseCurrentMarketParams) => {
+const useCurrentMarket = ({ pair, timeframe, offset = 0 }: UseCurrentMarketParams) => {
   const [market, setMarket] = useState<CurrentMarketData>(defaultState)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +50,7 @@ const useCurrentMarket = ({ pair, timeframe }: UseCurrentMarketParams) => {
       // Use the Next.js API proxy which talks to the ws-service.
       // This keeps all environment/URL config on the server side.
       const response = await fetch(
-        `/api/current-markets?pair=${encodeURIComponent(pair)}&timeframe=${encodeURIComponent(timeframe)}`
+        `/api/current-markets?pair=${encodeURIComponent(pair)}&timeframe=${encodeURIComponent(timeframe)}&offset=${offset}`
       )
 
       if (!response.ok) {
@@ -62,6 +69,12 @@ const useCurrentMarket = ({ pair, timeframe }: UseCurrentMarketParams) => {
         noTokenId: currentMarket.noTokenId ?? null,
         tokenId: currentMarket.tokenId ?? null,
         polymarketUrl: currentMarket.slug ? `https://polymarket.com/event/${currentMarket.slug}` : null,
+        // Market status fields (for past/future markets)
+        marketStatus: currentMarket.marketStatus ?? null,
+        isPast: currentMarket.isPast ?? false,
+        isFuture: currentMarket.isFuture ?? false,
+        isLive: currentMarket.isLive ?? true, // Default to live if not specified
+        offset: currentMarket.offset ?? 0,
       }
 
       // Check if market actually changed
@@ -79,7 +92,7 @@ const useCurrentMarket = ({ pair, timeframe }: UseCurrentMarketParams) => {
     } finally {
       setLoading(false)
     }
-  }, [pair, timeframe])
+  }, [pair, timeframe, offset])
 
   // Initial fetch
   useEffect(() => {

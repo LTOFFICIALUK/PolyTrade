@@ -3,6 +3,7 @@ import './globals.css'
 import Header from '@/components/Header'
 import { WalletProvider } from '@/contexts/WalletContext'
 import { WebSocketProvider } from '@/contexts/WebSocketContext'
+import { ToastProvider } from '@/contexts/ToastContext'
 
 export const metadata: Metadata = {
   title: 'PolyTrade - Terminal Trading Platform',
@@ -17,12 +18,14 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased" suppressHydrationWarning>
-        <WalletProvider>
-          <WebSocketProvider>
-            <Header />
-            {children}
-          </WebSocketProvider>
-        </WalletProvider>
+        <ToastProvider>
+          <WalletProvider>
+            <WebSocketProvider>
+              <Header />
+              {children}
+            </WebSocketProvider>
+          </WalletProvider>
+        </ToastProvider>
       </body>
     </html>
   )

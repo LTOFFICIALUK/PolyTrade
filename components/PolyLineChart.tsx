@@ -11,10 +11,11 @@ interface ChartPoint {
 }
 
 const PolyLineChart = () => {
-  const { selectedPair, selectedTimeframe } = useTradingContext()
+  const { selectedPair, selectedTimeframe, marketOffset } = useTradingContext()
   const { market } = useCurrentMarket({
     pair: selectedPair,
     timeframe: selectedTimeframe,
+    offset: marketOffset,
   })
   
   const [series, setSeries] = useState<ChartPoint[]>([])
@@ -22,6 +23,54 @@ const PolyLineChart = () => {
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const previousMarketIdRef = useRef<string | null>(null)
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
+  const historyFetchedRef = useRef<string | null>(null)
+
+  // Fetch historical price data from database
+  const fetchHistoricalData = useCallback(async (): Promise<ChartPoint[]> => {
+    if (!market?.marketId || !market?.startTime || !market?.endTime) {
+      return []
+    }
+
+    try {
+      const now = Date.now()
+      const eventStartTime = market.startTime
+      const eventEndTime = Math.min(market.endTime, now) // Don't fetch future data
+
+      // Build query parameters
+      const params = new URLSearchParams({
+        marketId: market.marketId,
+        startTime: eventStartTime.toString(),
+        endTime: eventEndTime.toString(),
+      })
+
+      // Add tokenIds if available (more accurate)
+      if (market.yesTokenId && market.noTokenId) {
+        params.append('yesTokenId', market.yesTokenId)
+        params.append('noTokenId', market.noTokenId)
+      }
+
+      const response = await fetch(`/api/polymarket/price-history?${params.toString()}`)
+      
+      if (!response.ok) {
+        console.warn('[PolyLineChart] Failed to fetch historical data:', response.status)
+        return []
+      }
+
+      const result = await response.json()
+      const historicalData = result.data || []
+
+      console.log(`[PolyLineChart] Fetched ${historicalData.length} historical data points`)
+      
+      return historicalData.map((point: any) => ({
+        time: point.time,
+        upPrice: point.upPrice || 0,
+        downPrice: point.downPrice || 0,
+      }))
+    } catch (error) {
+      console.error('[PolyLineChart] Error fetching historical data:', error)
+      return []
+    }
+  }, [market?.marketId, market?.startTime, market?.endTime, market?.yesTokenId, market?.noTokenId])
 
   // Fetch current bid prices for both UP and DOWN tokens from orderbook
   const fetchPrices = useCallback(async (): Promise<{ upPrice: number | null; downPrice: number | null }> => {
@@ -82,13 +131,17 @@ const PolyLineChart = () => {
     }
   }, [market?.yesTokenId, market?.noTokenId])
 
-  // Update chart data every second
+  // Check if this is a past market (ended)
+  const isMarketEnded = market?.isPast === true || market?.marketStatus === 'ended'
+
+  // Update chart data every second (or load historical for past markets)
   useEffect(() => {
     // Check if market changed
     const marketChanged = previousMarketIdRef.current !== null && previousMarketIdRef.current !== market?.marketId
     if (marketChanged && market?.marketId) {
       console.log(`[PolyLineChart] Market changed: ${previousMarketIdRef.current} → ${market.marketId}, resetting chart`)
       setSeries([])
+      historyFetchedRef.current = null // Reset history fetch flag for new market
     }
     previousMarketIdRef.current = market?.marketId ?? null
 
@@ -106,8 +159,65 @@ const PolyLineChart = () => {
     const eventEndTime = market.endTime
     const now = Date.now()
 
-    // Don't chart if event hasn't started yet or has already ended
-    if (now < eventStartTime || now > eventEndTime) {
+    // For PAST markets: Load historical data and DON'T poll for new prices
+    if (isMarketEnded || now > eventEndTime) {
+      // Stop any existing polling
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+
+      // Fetch historical data for the past market
+      const currentMarketKey = market?.marketId ? `${market.marketId}-${market.startTime}-past` : null
+      if (currentMarketKey && historyFetchedRef.current !== currentMarketKey) {
+        historyFetchedRef.current = currentMarketKey
+        console.log('[PolyLineChart] Fetching historical data for PAST market...')
+        
+        // For past markets, fetch for the full event window
+        const fetchPastMarketData = async () => {
+          try {
+            const params = new URLSearchParams({
+              marketId: market.marketId!,
+              startTime: eventStartTime.toString(),
+              endTime: eventEndTime.toString(), // Use actual end time, not "now"
+            })
+
+            if (market.yesTokenId && market.noTokenId) {
+              params.append('yesTokenId', market.yesTokenId)
+              params.append('noTokenId', market.noTokenId)
+            }
+
+            const response = await fetch(`/api/polymarket/price-history?${params.toString()}`)
+            
+            if (!response.ok) {
+              console.warn('[PolyLineChart] Failed to fetch past market data:', response.status)
+              return
+            }
+
+            const result = await response.json()
+            const historicalData = result.data || []
+
+            console.log(`[PolyLineChart] Loaded ${historicalData.length} points for past market`)
+            
+            if (historicalData.length > 0) {
+              setSeries(historicalData.map((point: any) => ({
+                time: point.time,
+                upPrice: point.upPrice || 0,
+                downPrice: point.downPrice || 0,
+              })))
+            }
+          } catch (error) {
+            console.error('[PolyLineChart] Error loading past market data:', error)
+          }
+        }
+
+        fetchPastMarketData()
+      }
+      return
+    }
+
+    // Don't chart if event hasn't started yet
+    if (now < eventStartTime) {
       setSeries([])
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
@@ -116,13 +226,31 @@ const PolyLineChart = () => {
       return
     }
 
-    // Initial fetch
+    // LIVE market: Fetch historical data first (if market changed or first load)
+    const currentMarketKey = market?.marketId ? `${market.marketId}-${market.startTime}` : null
+    const shouldFetchHistory = (currentMarketKey && historyFetchedRef.current !== currentMarketKey)
+
+    if (shouldFetchHistory && currentMarketKey) {
+      historyFetchedRef.current = currentMarketKey
+      console.log('[PolyLineChart] Fetching historical data for LIVE market...')
+      fetchHistoricalData().then((historicalData) => {
+        if (historicalData.length > 0) {
+          console.log(`[PolyLineChart] Pre-populating chart with ${historicalData.length} historical points`)
+          setSeries(historicalData)
+        } else {
+          console.log('[PolyLineChart] No historical data available, starting fresh')
+        }
+      }).catch((error) => {
+        console.error('[PolyLineChart] Error loading historical data:', error)
+      })
+    }
+
+    // Update chart with current prices (LIVE market only)
     const updateChart = async () => {
       const { upPrice, downPrice } = await fetchPrices()
       if (upPrice === null && downPrice === null) return
 
       const currentTime = Date.now()
-      const isMarketChanged = previousMarketIdRef.current !== market?.marketId
       
       setSeries((prev) => {
         // Filter out points outside the event window or from different markets
@@ -138,25 +266,6 @@ const PolyLineChart = () => {
           time: currentTime,
           upPrice: finalUpPrice,
           downPrice: finalDownPrice,
-        }
-
-        // If this is the first point or market changed, initialize from event start
-        if (filtered.length === 0 || isMarketChanged) {
-          const points: ChartPoint[] = []
-          
-          // Start from event start time, but if we're already into the event, start from a reasonable point
-          const startTime = Math.max(eventStartTime, currentTime - 60 * 1000) // Start from 1 minute ago or event start, whichever is later
-          
-          // Create points every second from start time to now
-          for (let t = startTime; t <= currentTime; t += 1000) {
-            points.push({
-              time: t,
-              upPrice: finalUpPrice,
-              downPrice: finalDownPrice,
-            })
-          }
-          
-          return points
         }
 
         // Check if we already have a point for this second (avoid duplicates)
@@ -177,7 +286,7 @@ const PolyLineChart = () => {
     // Initial fetch
     updateChart()
 
-    // Update every second
+    // Update every second (LIVE market only)
     intervalRef.current = setInterval(updateChart, 1000)
 
       return () => {
@@ -186,7 +295,7 @@ const PolyLineChart = () => {
           intervalRef.current = null
         }
       }
-    }, [market?.startTime, market?.endTime, market?.marketId, fetchPrices])
+    }, [market?.startTime, market?.endTime, market?.marketId, market?.yesTokenId, market?.noTokenId, market?.isPast, market?.marketStatus, isMarketEnded, fetchPrices, fetchHistoricalData])
 
   const { upLinePath, downLinePath, minPrice, maxPrice, paddedMin, paddedMax, eventStartTime, eventEndTime } = useMemo(() => {
     if (!series.length || !market?.startTime || !market?.endTime) {
@@ -370,7 +479,8 @@ const PolyLineChart = () => {
   const eventStarted = now >= market.startTime
   const eventEnded = now > market.endTime
 
-  if (!eventStarted) {
+  // For future markets (not started yet), show message
+  if (!eventStarted && !isMarketEnded) {
     return (
       <div className="w-full h-full bg-black text-white flex items-center justify-center">
         <div className="text-center">
@@ -381,16 +491,9 @@ const PolyLineChart = () => {
     )
   }
 
-  if (eventEnded) {
-    return (
-      <div className="w-full h-full bg-black text-white flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-gray-400 text-sm">Event ended at {formatTime(market.endTime)}</p>
-          <p className="text-gray-500 text-xs mt-1">{formatDate(market.endTime)}</p>
-        </div>
-      </div>
-    )
-  }
+  // For past markets: Show chart with historical data (don't show "ended" message)
+  // We check isMarketEnded which is set from the API response for offset markets
+  // This allows viewing historical data for past markets
 
   return (
     <div className="w-full h-full bg-black text-white relative overflow-hidden">
@@ -404,19 +507,25 @@ const PolyLineChart = () => {
         <div className="flex items-center justify-between text-xs sm:text-sm flex-shrink-0">
           <div>
             <p className="text-gray-400 uppercase tracking-widest">POLY ORDERBOOK</p>
-            <p className="text-lg font-semibold">{selectedPair} • Live Bid</p>
+            <p className="text-lg font-semibold">
+              {selectedPair} • {isMarketEnded ? (
+                <span className="text-gray-500">Historical</span>
+              ) : (
+                'Live Bid'
+              )}
+            </p>
           </div>
           <div className="flex items-center gap-4 text-sm">
             {displayUpPrice !== null && (
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-green-400" />
-                <span className="text-green-400 font-semibold">UP {displayUpPrice.toFixed(2)}¢</span>
+                <span className="text-green-400 font-semibold">UP {Math.round(displayUpPrice)}¢</span>
               </div>
             )}
             {displayDownPrice !== null && (
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-red-400" />
-                <span className="text-red-400 font-semibold">DOWN {displayDownPrice.toFixed(2)}¢</span>
+                <span className="text-red-400 font-semibold">DOWN {Math.round(displayDownPrice)}¢</span>
               </div>
             )}
             {hoveredPoint && (

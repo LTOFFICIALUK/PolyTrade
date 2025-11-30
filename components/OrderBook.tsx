@@ -83,12 +83,16 @@ const normalizeOrderbookData = (payload: any): OrderBookData => {
 }
 
 const OrderBook = forwardRef<OrderBookHandle>((props, ref) => {
-  const { selectedPair, selectedTimeframe, activeTokenId } = useTradingContext()
+  const { selectedPair, selectedTimeframe, activeTokenId, marketOffset } = useTradingContext()
   const { isConnected, subscribeMarkets } = useWebSocket()
   const { market, loading: marketLoading, error: marketError } = useCurrentMarket({
     pair: selectedPair,
     timeframe: selectedTimeframe,
+    offset: marketOffset,
   })
+  
+  // Check if market is ended (past)
+  const isMarketEnded = market.isPast === true || market.marketStatus === 'ended'
   
   console.log('[OrderBook] Render - isConnected:', isConnected, 'market:', market?.marketId, 'tokenId:', market?.tokenId)
   // Store both UP and DOWN orderbooks separately
@@ -547,6 +551,15 @@ const OrderBook = forwardRef<OrderBookHandle>((props, ref) => {
     }
   }, [orderBook, centerToSpread, isAutoCenteringEnabled])
 
+  // For past markets, just show the ended message
+  if (isMarketEnded) {
+    return (
+      <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm">
+        Historical Data — Market Ended
+      </div>
+    )
+  }
+
   if (marketLoading || orderbookLoading) {
     return (
       <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
@@ -653,7 +666,7 @@ const OrderBook = forwardRef<OrderBookHandle>((props, ref) => {
                 className="flex border-b border-gray-800/50 hover:bg-gray-900/30"
               >
                 <div className="flex-1 px-4 py-1.5 text-sm text-red-400">
-                  ${ask.price > 1 ? (ask.price / 100).toFixed(2) : ask.price.toFixed(2)}
+                  {ask.price > 1 ? Math.round(ask.price) : Math.round(ask.price * 100)}¢
                 </div>
                 <div className="flex-1 px-4 py-1.5 text-sm text-gray-300 text-right">
                   {ask.size.toLocaleString()}
@@ -677,10 +690,10 @@ const OrderBook = forwardRef<OrderBookHandle>((props, ref) => {
             className="px-4 py-2 border-y border-gray-800 bg-gray-900/20"
           >
             <div className="text-center text-xs text-gray-400">
-              Spread: ${(
-                (asks[0].price > 1 ? asks[0].price / 100 : asks[0].price) -
-                (bids[0].price > 1 ? bids[0].price / 100 : bids[0].price)
-              ).toFixed(2)}
+              Spread: {Math.round(
+                (asks[0].price > 1 ? asks[0].price : asks[0].price * 100) -
+                (bids[0].price > 1 ? bids[0].price : bids[0].price * 100)
+              )}¢
             </div>
           </div>
         )}
@@ -694,7 +707,7 @@ const OrderBook = forwardRef<OrderBookHandle>((props, ref) => {
                 className="flex border-b border-gray-800/50 hover:bg-gray-900/30"
               >
                 <div className="flex-1 px-4 py-1.5 text-sm text-green-400">
-                  ${bid.price > 1 ? (bid.price / 100).toFixed(2) : bid.price.toFixed(2)}
+                  {bid.price > 1 ? Math.round(bid.price) : Math.round(bid.price * 100)}¢
                 </div>
                 <div className="flex-1 px-4 py-1.5 text-sm text-gray-300 text-right">
                   {bid.size.toLocaleString()}

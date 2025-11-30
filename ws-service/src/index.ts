@@ -423,10 +423,106 @@ const httpServer = http.createServer(async (req, res) => {
     })
     req.on('end', async () => {
       try {
-        const { pair, timeframe } = JSON.parse(body)
+        const { pair, timeframe, offset = 0 } = JSON.parse(body)
         const pairUpper = (pair || '').toUpperCase()
         const timeframeNormalized = timeframe ? timeframe.toLowerCase() : undefined
 
+        // ========== OFFSET MARKET LOOKUP (past/future markets) ==========
+        // If offset != 0, fetch the market for that specific time window
+        // This is separate from the existing current market logic to avoid breaking it
+        if (offset !== 0 && pairUpper && timeframeNormalized) {
+          const timeframeMinutes = timeframeNormalized === '15m' ? 15 : 60
+          
+          // Calculate the target time window based on offset
+          const baseWindowStart = getEventWindowStart(timeframeMinutes)
+          const targetWindowStart = baseWindowStart + (offset * timeframeMinutes * 60 * 1000)
+          const targetTimestampSeconds = Math.floor(targetWindowStart / 1000)
+          
+          // Generate slug for the target window
+          const slug = generateSlug(pairUpper, timeframeNormalized, targetTimestampSeconds)
+          
+          if (slug) {
+            console.log(`[Server] Offset market lookup: pair=${pairUpper}, timeframe=${timeframeNormalized}, offset=${offset}, slug=${slug}`)
+            
+            try {
+              const marketMetadata = await fetchMarketBySlug(slug)
+              
+              if (marketMetadata) {
+                // Calculate event start/end times
+                const eventStart = targetWindowStart
+                const eventEnd = targetWindowStart + (timeframeMinutes * 60 * 1000)
+                const now = Date.now()
+                
+                // Determine market status
+                const isPast = eventEnd < now
+                const isFuture = eventStart > now
+                const isLive = !isPast && !isFuture
+                
+                const yesTokenId = marketMetadata.yesTokenId || marketMetadata.tokenId || marketMetadata.tokenIds?.[0] || null
+                const noTokenId = marketMetadata.noTokenId || marketMetadata.tokenIds?.[1] || null
+                
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({
+                  marketId: marketMetadata.marketId,
+                  question: marketMetadata.question,
+                  tokenId: yesTokenId,
+                  yesTokenId,
+                  noTokenId,
+                  tokenIds: marketMetadata.tokenIds || (yesTokenId ? [yesTokenId, noTokenId].filter(Boolean) : undefined),
+                  slug: marketMetadata.slug || slug,
+                  bestBid: null, // Offset markets may not have live prices in state store
+                  bestAsk: null,
+                  lastPrice: null,
+                  startTime: eventStart,
+                  endTime: eventEnd,
+                  eventTimeframe: timeframeNormalized,
+                  // Additional metadata for offset markets
+                  offset,
+                  marketStatus: isPast ? 'ended' : isFuture ? 'upcoming' : 'live',
+                  isPast,
+                  isFuture,
+                  isLive,
+                  debug: {
+                    offsetRequested: offset,
+                    targetWindowStart: new Date(eventStart).toISOString(),
+                    targetWindowStartET: new Date(eventStart).toLocaleString('en-US', { timeZone: 'America/New_York' }),
+                    targetWindowEnd: new Date(eventEnd).toISOString(),
+                    targetWindowEndET: new Date(eventEnd).toLocaleString('en-US', { timeZone: 'America/New_York' }),
+                    slugUsed: slug,
+                  }
+                }))
+                return
+              } else {
+                console.log(`[Server] Offset market not found for slug: ${slug}`)
+                // Fall through to return no market found
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({
+                  marketId: null,
+                  question: null,
+                  error: `No market found for offset ${offset}`,
+                  offset,
+                  debug: { slugAttempted: slug }
+                }))
+                return
+              }
+            } catch (slugError: any) {
+              console.error(`[Server] Error fetching offset market by slug ${slug}:`, slugError.message)
+              // Fall through to return error
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({
+                marketId: null,
+                question: null,
+                error: `Failed to fetch market for offset ${offset}: ${slugError.message}`,
+                offset,
+                debug: { slugAttempted: slug }
+              }))
+              return
+            }
+          }
+        }
+        // ========== END OFFSET MARKET LOOKUP ==========
+
+        // Original current market logic (offset === 0 or no offset)
         await ensureMarketMetadataForPair(pairUpper, timeframeNormalized)
 
         const stateStore = wsServer.getStateStore()

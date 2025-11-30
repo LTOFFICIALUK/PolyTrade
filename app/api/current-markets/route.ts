@@ -8,6 +8,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const pair = searchParams.get('pair') // BTC, SOL, ETH, XRP
   const timeframe = searchParams.get('timeframe') // 15m, 1h
+  const offset = parseInt(searchParams.get('offset') || '0', 10) // Market offset: 0 = current, -1 = previous, +1 = next
 
   try {
     // Fetch current markets from WebSocket service
@@ -16,7 +17,7 @@ export async function GET(req: Request) {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ pair, timeframe }),
+      body: JSON.stringify({ pair, timeframe, offset }),
       cache: 'no-store',
     })
 

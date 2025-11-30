@@ -130,35 +130,31 @@ export const fetchMultipleOrderbooks = async (tokenIds: string[]): Promise<Map<s
 
     const data = await response.json() as any[]
     
-    // Map results back to token IDs
-    // Note: API returns array in same order as request (per Polymarket docs)
-    for (let i = 0; i < data.length && i < tokenIds.length; i++) {
+    // Debug: Log first 2 results
+    if (data.length > 0) {
+      const sample = data.slice(0, 2)
+      sample.forEach((book: any, i: number) => {
+        const lastBid = book.bids?.[book.bids?.length - 1]?.price
+        console.log(`[clobClient] Book ${i}: asset_id=${book.asset_id?.substring(0, 20)}..., bids=${book.bids?.length}, lastBid(best)=${lastBid}`)
+      })
+    }
+    
+    // Map results back to token IDs using asset_id for reliable matching
+    for (let i = 0; i < data.length; i++) {
       const orderbook = data[i]
-      if (orderbook && orderbook.bids && orderbook.asks) {
+      if (orderbook && orderbook.bids && orderbook.asks && orderbook.asset_id) {
+        // Use asset_id from response to match to correct token (more reliable than index)
+        const tokenId = orderbook.asset_id
+        
         // IMPORTANT: Polymarket CLOB API returns bids/asks in REVERSE order:
         // - Bids: sorted lowest to highest (we need highest to lowest)
         // - Asks: sorted highest to lowest (we need lowest to highest)
         // Reverse both arrays to get correct order
-        const originalFirstBid = orderbook.bids[0]?.price
-        const originalLastBid = orderbook.bids[orderbook.bids.length - 1]?.price
-        const originalFirstAsk = orderbook.asks[0]?.price
-        const originalLastAsk = orderbook.asks[orderbook.asks.length - 1]?.price
-        
         const bids = Array.isArray(orderbook.bids) ? [...orderbook.bids].reverse() : []
         const asks = Array.isArray(orderbook.asks) ? [...orderbook.asks].reverse() : []
         
-        const reversedFirstBid = bids[0]?.price
-        const reversedFirstAsk = asks[0]?.price
-        
-        // Debug log to verify reverse is working
-        if (i === 0 && tokenIds.length > 0) {
-          console.log(`[clobClient] fetchMultipleOrderbooks - TokenId: ${tokenIds[i].substring(0, 20)}...`)
-          console.log(`[clobClient] Original: firstBid=${originalFirstBid}, lastBid=${originalLastBid}, firstAsk=${originalFirstAsk}, lastAsk=${originalLastAsk}`)
-          console.log(`[clobClient] After reverse: firstBid=${reversedFirstBid}, firstAsk=${reversedFirstAsk}`)
-        }
-        
         // Extract full OrderBookSummary including timestamp and hash for change detection
-        results.set(tokenIds[i], {
+        results.set(tokenId, {
           bids: bids,
           asks: asks,
           timestamp: orderbook.timestamp,
