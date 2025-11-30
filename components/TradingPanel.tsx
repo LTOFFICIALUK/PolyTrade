@@ -913,15 +913,15 @@ const TradingPanel = () => {
             isMarketEnded
               ? 'bg-gray-800/50 border-gray-700 text-gray-500 cursor-not-allowed'
               : isTradingUp
-                ? 'bg-green-500/10 border-green-500 text-green-400 hover:bg-green-500/20'
-                : 'bg-red-500/10 border-red-500 text-red-400 hover:bg-red-500/20'
+              ? 'bg-green-500/10 border-green-500 text-green-400 hover:bg-green-500/20'
+              : 'bg-red-500/10 border-red-500 text-red-400 hover:bg-red-500/20'
           }`}
         >
           {isMarketEnded
             ? 'MARKET ENDED'
             : executionType === 'limit'
-              ? `${isBuy ? 'BUY' : 'SELL'} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'} @ LIMIT`
-              : `${isBuy ? 'BUY' : 'SELL'} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'}`}
+            ? `${isBuy ? 'BUY' : 'SELL'} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'} @ LIMIT`
+            : `${isBuy ? 'BUY' : 'SELL'} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'}`}
         </button>
 
         <div className="rounded-lg border border-gray-800 bg-gray-900/40 px-3 py-2 text-xs text-gray-400 space-y-1">

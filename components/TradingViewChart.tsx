@@ -8,6 +8,8 @@ const TradingViewChart = () => {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<any>(null)
   const [widgetId] = useState(() => `tradingview_${Math.random().toString(36).substr(2, 9)}`)
+  // Chart-only timeframe (independent from market timeframe)
+  const [chartInterval, setChartInterval] = useState(selectedTimeframe)
 
   // Map asset symbols to TradingView format
   const getTradingViewSymbol = (pair: string): string => {
@@ -42,7 +44,7 @@ const TradingViewChart = () => {
 
     // Build TradingView Advanced Chart URL with black theme customization
     const symbol = getTradingViewSymbol(selectedPair)
-    const interval = getInterval(selectedTimeframe)
+    const interval = getInterval(chartInterval)
 
     // Add custom styles for black background
     const styleId = `tradingview-style-${widgetId}`
@@ -148,28 +150,16 @@ const TradingViewChart = () => {
       }
       chartRef.current = null
     }
-  }, [selectedPair, selectedTimeframe, widgetId])
+  }, [selectedPair, chartInterval, widgetId])
 
-  // State for the custom toolbar
-  const [currentInterval, setCurrentInterval] = useState('15m')
-
-  // Update chart when pair or timeframe changes (if chart is already loaded)
+  // Reset chart interval to market timeframe when market or pair changes
   useEffect(() => {
-    // Sync local state with global context if needed, or vice versa
-    // But if we want independent control, we might not want to sync perfectly
-    // For now, let's default to syncing with context
-    setCurrentInterval(selectedTimeframe)
-  }, [selectedTimeframe])
+    setChartInterval(selectedTimeframe)
+  }, [selectedTimeframe, selectedPair])
 
   const handleIntervalChange = (tf: string) => {
-    setCurrentInterval(tf)
-    if (chartRef.current) {
-      const symbol = getTradingViewSymbol(selectedPair)
-      const interval = getInterval(tf)
-      try {
-        chartRef.current.setSymbol(symbol, interval, () => {})
-      } catch (e) {}
-    }
+    // Only update chart interval, not market timeframe
+    setChartInterval(tf)
   }
 
   // State for toolbar position
@@ -254,7 +244,7 @@ const TradingViewChart = () => {
               handleIntervalChange(tf)
             }}
             className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-              currentInterval === tf
+              chartInterval === tf
                 ? 'bg-purple-primary text-white'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
             }`}

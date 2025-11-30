@@ -1573,7 +1573,7 @@ function startAutomaticMarketRefresh() {
   const pairs = ['BTC', 'SOL', 'ETH', 'XRP']
   const timeframes = ['15m', '1h']
   
-  // Refresh 15m markets every 15 minutes
+  // Refresh 15m markets every 1 minute (so new markets are discovered quickly)
   setInterval(async () => {
     console.log('[Server] Auto-refreshing 15m markets...')
     for (const pair of pairs) {
@@ -1583,7 +1583,7 @@ function startAutomaticMarketRefresh() {
         console.error(`[Server] Error auto-refreshing ${pair} 15m:`, error)
       }
     }
-  }, 15 * 60 * 1000) // 15 minutes
+  }, 60 * 1000) // 1 minute
   
   // Refresh 1h markets every hour
   setInterval(async () => {

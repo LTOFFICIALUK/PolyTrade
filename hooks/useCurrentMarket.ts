@@ -33,7 +33,40 @@ const useCurrentMarket = ({ pair, timeframe, offset = 0 }: UseCurrentMarketParam
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
   const previousMarketIdRef = useRef<string | null>(null)
+  const fetchCurrentMarketRef = useRef<() => Promise<void>>()
+
+  // Schedule refresh exactly when market window ends
+  const scheduleRefreshAtMarketEnd = useCallback((endTime: number) => {
+    // Clear any existing timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
+
+    const now = Date.now()
+    const timeUntilEnd = endTime - now
+
+    // Only schedule if end time is in the future and within reasonable range (0 to 1 hour)
+    if (timeUntilEnd > 0 && timeUntilEnd <= 60 * 60 * 1000) {
+      const endDate = new Date(endTime)
+      console.log(`[useCurrentMarket] Scheduling refresh at market end: ${endDate.toLocaleTimeString()} (in ${Math.round(timeUntilEnd / 1000)}s)`)
+      
+      timeoutRef.current = setTimeout(() => {
+        console.log(`[useCurrentMarket] Market window ended, refreshing to next market...`)
+        if (fetchCurrentMarketRef.current) {
+          fetchCurrentMarketRef.current()
+        }
+      }, timeUntilEnd)
+    } else if (timeUntilEnd <= 0) {
+      // Market already ended, refresh immediately
+      console.log(`[useCurrentMarket] Market window already ended, refreshing immediately...`)
+      if (fetchCurrentMarketRef.current) {
+        fetchCurrentMarketRef.current()
+      }
+    }
+  }, [])
 
   const fetchCurrentMarket = useCallback(async () => {
     if (!pair || !timeframe) {
@@ -85,6 +118,11 @@ const useCurrentMarket = ({ pair, timeframe, offset = 0 }: UseCurrentMarketParam
 
       previousMarketIdRef.current = newMarket.marketId
       setMarket(newMarket)
+      
+      // Schedule refresh at market end time if we have endTime
+      if (newMarket.endTime && offset === 0) {
+        scheduleRefreshAtMarketEnd(newMarket.endTime)
+      }
     } catch (err) {
       console.error('Error fetching current market:', err)
       setError(err instanceof Error ? err.message : 'Failed to load market')
@@ -92,14 +130,19 @@ const useCurrentMarket = ({ pair, timeframe, offset = 0 }: UseCurrentMarketParam
     } finally {
       setLoading(false)
     }
-  }, [pair, timeframe, offset])
+  }, [pair, timeframe, offset, scheduleRefreshAtMarketEnd])
+
+  // Store fetch function in ref so scheduleRefreshAtMarketEnd can call it
+  useEffect(() => {
+    fetchCurrentMarketRef.current = fetchCurrentMarket
+  }, [fetchCurrentMarket])
 
   // Initial fetch
   useEffect(() => {
     fetchCurrentMarket()
   }, [fetchCurrentMarket])
 
-  // Set up automatic polling based on timeframe
+  // Set up automatic polling as fallback (shorter interval for safety)
   useEffect(() => {
     // Clear any existing interval
     if (intervalRef.current) {
@@ -109,18 +152,18 @@ const useCurrentMarket = ({ pair, timeframe, offset = 0 }: UseCurrentMarketParam
 
     if (!pair || !timeframe) return
 
-    // Determine polling interval based on timeframe
-    // Poll more frequently than the market window to catch changes quickly
-    // For 15m markets: poll every 2 minutes (catches new market within 2 min of change)
-    // For 1h markets: poll every 5 minutes (catches new market within 5 min of change)
+    // Use shorter polling interval as fallback (30 seconds for 15m, 1 minute for 1h)
+    // This ensures we catch market changes even if the timeout doesn't fire
     const pollingInterval = timeframe.toLowerCase() === '15m' 
-      ? 2 * 60 * 1000  // 2 minutes for 15m markets
-      : 5 * 60 * 1000  // 5 minutes for 1h markets
+      ? 30 * 1000  // 30 seconds for 15m markets (fallback)
+      : 60 * 1000  // 1 minute for 1h markets (fallback)
 
-    console.log(`[useCurrentMarket] Starting auto-refresh for ${pair} ${timeframe} (every ${pollingInterval / 1000}s)`)
+    console.log(`[useCurrentMarket] Starting fallback polling for ${pair} ${timeframe} (every ${pollingInterval / 1000}s)`)
 
     intervalRef.current = setInterval(() => {
-      console.log(`[useCurrentMarket] Auto-refreshing market for ${pair} ${timeframe}`)
+      // Fallback polling - always run as safety net
+      // The timeout-based refresh is primary, but this ensures we catch changes
+      // even if the timeout doesn't fire or endTime is missing
       fetchCurrentMarket()
     }, pollingInterval)
 
@@ -129,6 +172,10 @@ const useCurrentMarket = ({ pair, timeframe, offset = 0 }: UseCurrentMarketParam
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
         intervalRef.current = null
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+        timeoutRef.current = null
       }
     }
   }, [pair, timeframe, fetchCurrentMarket])

@@ -10,6 +10,7 @@ const ChartControls = () => {
   const { showToast } = useToast()
   const [showMarketDropdown, setShowMarketDropdown] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const [countdown, setCountdown] = useState({ minutes: 0, seconds: 0 })
   
   // Check if current market is a future market
   const isFutureMarket = marketOffset > 0
@@ -89,6 +90,43 @@ const ChartControls = () => {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  // Countdown timer to market close
+  useEffect(() => {
+    const calculateCountdown = () => {
+      const now = new Date()
+      const timeframeMinutes = selectedTimeframe === '15m' ? 15 : 60
+      
+      // Calculate the start of the current market window
+      const currentMinutes = now.getHours() * 60 + now.getMinutes()
+      const windowStartMinutes = Math.floor(currentMinutes / timeframeMinutes) * timeframeMinutes
+      
+      // Apply offset to get target window end
+      const targetEndMinutes = windowStartMinutes + ((marketOffset + 1) * timeframeMinutes)
+      
+      // Calculate seconds until window closes
+      const currentSeconds = now.getSeconds()
+      const totalSecondsNow = currentMinutes * 60 + currentSeconds
+      const targetEndSeconds = targetEndMinutes * 60
+      
+      let remainingSeconds = targetEndSeconds - totalSecondsNow
+      
+      // Handle day boundary
+      if (remainingSeconds < 0) {
+        remainingSeconds += 24 * 60 * 60
+      }
+      
+      const mins = Math.floor(remainingSeconds / 60)
+      const secs = remainingSeconds % 60
+      
+      setCountdown({ minutes: mins, seconds: secs })
+    }
+
+    calculateCountdown()
+    const interval = setInterval(calculateCountdown, 1000)
+    
+    return () => clearInterval(interval)
+  }, [selectedTimeframe, marketOffset])
 
   const handleTimeframeClick = (tf: string) => {
     if (selectedTimeframe === tf) {
@@ -190,7 +228,7 @@ const ChartControls = () => {
                       }`}
                     >
                       <span className="flex items-center gap-2">
-                        {isPast && <span className="text-gray-500 text-xs">Past</span>}
+                        {isPast && <span className="text-gray-500 text-xs">Ended</span>}
                         {isCurrent && <span className="text-green-500 text-xs">Live</span>}
                         {!isPast && !isCurrent && <span className="text-blue-500 text-xs">Future</span>}
                         <span className={isCurrent ? 'font-semibold' : ''}>
@@ -220,12 +258,22 @@ const ChartControls = () => {
                   ? 'bg-gray-500/20 text-gray-400'
                   : 'bg-blue-500/20 text-blue-400'
             }`}>
-              {marketOffset === 0 ? 'LIVE' : marketOffset < 0 ? 'PAST' : 'FUTURE'}
+              {marketOffset === 0 ? 'LIVE' : marketOffset < 0 ? 'ENDED' : 'FUTURE'}
             </span>
             <span className="text-gray-300 font-medium">
               {getMarketWindowLabel(marketOffset, true)}
             </span>
           </div>
+
+          {/* Countdown Timer - only show for live market */}
+          {marketOffset === 0 && (
+            <>
+              <span className="text-gray-500 hidden sm:inline">→</span>
+              <span className="text-gray-300 font-medium font-mono tabular-nums text-xs sm:text-sm">
+                {String(countdown.minutes).padStart(2, '0')}:{String(countdown.seconds).padStart(2, '0')}
+              </span>
+            </>
+          )}
         </div>
 
         {/* TradingView Chart Button */}
@@ -237,7 +285,7 @@ const ChartControls = () => {
                 ? 'bg-purple-primary text-white'
                 : isFutureMarket
                   ? 'text-gray-600 cursor-not-allowed'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                : 'text-gray-400 hover:text-white hover:bg-gray-800'
             }`}
             aria-label="TradingView Chart"
             title={isFutureMarket && showTradingView ? 'Poly Orderbook not available for future markets' : 'TradingView Chart'}

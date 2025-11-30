@@ -19,12 +19,12 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased" suppressHydrationWarning>
         <ToastProvider>
-          <WalletProvider>
-            <WebSocketProvider>
-              <Header />
-              {children}
-            </WebSocketProvider>
-          </WalletProvider>
+        <WalletProvider>
+          <WebSocketProvider>
+            <Header />
+            {children}
+          </WebSocketProvider>
+        </WalletProvider>
         </ToastProvider>
       </body>
     </html>
