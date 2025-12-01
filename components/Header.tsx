@@ -127,6 +127,7 @@ const Header = () => {
   const handleProfileMouseLeave = (
     event: React.MouseEvent<HTMLDivElement, MouseEvent>
   ) => {
+    // The invisible bridge will handle the gap - just close if not moving to dropdown
     const nextTarget = event.relatedTarget as Node
     if (profileMenuRef.current && profileMenuRef.current.contains(nextTarget)) {
       return
@@ -163,7 +164,7 @@ const Header = () => {
   }
 
   return (
-    <header className="w-full border-b border-gray-800 bg-black/95 backdrop-blur-sm">
+    <header className="w-full border-b border-gray-800 bg-black/95 backdrop-blur-sm relative z-[9999]">
       <div className="px-4 sm:px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-8">
@@ -246,7 +247,8 @@ const Header = () => {
               onMouseLeave={handleProfileMouseLeave}
               onFocus={handleProfileFocus}
               onBlur={handleProfileBlur}
-              className="relative"
+              className="relative z-50"
+              style={{ zIndex: 9999 }}
             >
               <div
                 onClick={handleProfileClick}
@@ -269,14 +271,17 @@ const Header = () => {
                   onMouseLeave={handleDropdownMouseLeave}
                   role="menu"
                   aria-label="Profile actions"
-                  className="absolute right-0 top-full mt-2 w-40 rounded-xl border border-gray-800 bg-black/95 text-white shadow-lg backdrop-blur"
+                  className="absolute right-0 top-full pt-1 z-50"
+                  style={{ zIndex: 9999 }}
                 >
-                  <button
-                    onClick={handleLogoutClick}
-                    className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-primary rounded-xl"
-                  >
-                    Log out
-                  </button>
+                  <div className="w-40 rounded-xl border border-gray-800 bg-black/95 text-white shadow-lg backdrop-blur">
+                    <button
+                      onClick={handleLogoutClick}
+                      className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-primary rounded-xl"
+                    >
+                      Log out
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
