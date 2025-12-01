@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useTradingContext } from '@/contexts/TradingContext'
 import useCurrentMarket from '@/hooks/useCurrentMarket'
+import AnimatedPrice from './AnimatedPrice'
 
 interface ChartPoint {
   time: number
@@ -519,13 +520,31 @@ const PolyLineChart = () => {
             {displayUpPrice !== null && (
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-green-400" />
-                <span className="text-green-400 font-semibold">UP {Math.round(displayUpPrice)}¢</span>
+                <span className="text-green-400 font-semibold">
+                  UP{' '}
+                  <>
+                    <AnimatedPrice
+                      value={displayUpPrice}
+                      format={(val) => Math.round(val).toString()}
+                    />
+                    ¢
+                  </>
+                </span>
               </div>
             )}
             {displayDownPrice !== null && (
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-red-400" />
-                <span className="text-red-400 font-semibold">DOWN {Math.round(displayDownPrice)}¢</span>
+                <span className="text-red-400 font-semibold">
+                  DOWN{' '}
+                  <>
+                    <AnimatedPrice
+                      value={displayDownPrice}
+                      format={(val) => Math.round(val).toString()}
+                    />
+                    ¢
+                  </>
+                </span>
               </div>
             )}
             {hoveredPoint && (

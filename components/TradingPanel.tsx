@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback, KeyboardEvent, MouseEvent } from 'react'
 import StrategyAnalytics from './StrategyAnalytics'
+import AnimatedPrice from './AnimatedPrice'
 import usePolymarketPrices from '@/hooks/usePolymarketPrices'
 import { useTradingContext } from '@/contexts/TradingContext'
 import useCurrentMarket from '@/hooks/useCurrentMarket'
@@ -1047,7 +1048,17 @@ const TradingPanel = () => {
                 >
                   <span>Buy Up</span>
                   <span className={`text-xs font-semibold ${selectedOutcome === 'up' ? 'text-green-400' : 'text-gray-400'}`}>
-                    {yesPriceFormatted}¢
+                    {yesPriceFormatted === 'Ended' || yesPriceFormatted === 'ERROR' ? (
+                      `${yesPriceFormatted}¢`
+                    ) : (
+                      <>
+                        <AnimatedPrice
+                          value={parseFloat(yesPriceFormatted)}
+                          format={(val) => Math.round(val).toString()}
+                        />
+                        ¢
+                      </>
+                    )}
                   </span>
                 </button>
                 {/* Buy Down Button */}
@@ -1065,7 +1076,17 @@ const TradingPanel = () => {
                 >
                   <span>Buy Down</span>
                   <span className={`text-xs font-semibold ${selectedOutcome === 'down' ? 'text-red-400' : 'text-gray-400'}`}>
-                    {noPriceFormatted}¢
+                    {noPriceFormatted === 'Ended' || noPriceFormatted === 'ERROR' ? (
+                      `${noPriceFormatted}¢`
+                    ) : (
+                      <>
+                        <AnimatedPrice
+                          value={parseFloat(noPriceFormatted)}
+                          format={(val) => Math.round(val).toString()}
+                        />
+                        ¢
+                      </>
+                    )}
                   </span>
                 </button>
               </>
@@ -1086,7 +1107,17 @@ const TradingPanel = () => {
                 >
                   <span>Sell Up</span>
                   <span className={`text-xs font-semibold ${selectedOutcome === 'up' ? 'text-green-400' : 'text-gray-400'}`}>
-                    {yesSellPriceFormatted}¢
+                    {yesSellPriceFormatted === 'Ended' || yesSellPriceFormatted === 'ERROR' ? (
+                      `${yesSellPriceFormatted}¢`
+                    ) : (
+                      <>
+                        <AnimatedPrice
+                          value={parseFloat(yesSellPriceFormatted)}
+                          format={(val) => Math.round(val).toString()}
+                        />
+                        ¢
+                      </>
+                    )}
                   </span>
                 </button>
                 {/* Sell Down Button */}
@@ -1104,7 +1135,17 @@ const TradingPanel = () => {
                 >
                   <span>Sell Down</span>
                   <span className={`text-xs font-semibold ${selectedOutcome === 'down' ? 'text-red-400' : 'text-gray-400'}`}>
-                    {noSellPriceFormatted}¢
+                    {noSellPriceFormatted === 'Ended' || noSellPriceFormatted === 'ERROR' ? (
+                      `${noSellPriceFormatted}¢`
+                    ) : (
+                      <>
+                        <AnimatedPrice
+                          value={parseFloat(noSellPriceFormatted)}
+                          format={(val) => Math.round(val).toString()}
+                        />
+                        ¢
+                      </>
+                    )}
                   </span>
                 </button>
               </>
@@ -1182,7 +1223,17 @@ const TradingPanel = () => {
                 >
                   <span>Buy Up</span>
                   <span className={`text-xs font-semibold ${isMarketEnded ? 'text-gray-500' : selectedOutcome === 'up' ? 'text-green-400' : 'text-gray-400'}`}>
-                    {isMarketEnded ? 'Ended' : `${yesPriceFormatted}¢`}
+                    {isMarketEnded || yesPriceFormatted === 'ERROR' ? (
+                      isMarketEnded ? 'Ended' : 'ERROR'
+                    ) : (
+                      <>
+                        <AnimatedPrice
+                          value={parseFloat(yesPriceFormatted)}
+                          format={(val) => Math.round(val).toString()}
+                        />
+                        ¢
+                      </>
+                    )}
                   </span>
                 </button>
                 {/* Buy Down Button */}
@@ -1202,7 +1253,17 @@ const TradingPanel = () => {
                 >
                   <span>Buy Down</span>
                   <span className={`text-xs font-semibold ${isMarketEnded ? 'text-gray-500' : selectedOutcome === 'down' ? 'text-red-400' : 'text-gray-400'}`}>
-                    {isMarketEnded ? 'Ended' : `${noPriceFormatted}¢`}
+                    {isMarketEnded || noPriceFormatted === 'ERROR' ? (
+                      isMarketEnded ? 'Ended' : 'ERROR'
+                    ) : (
+                      <>
+                        <AnimatedPrice
+                          value={parseFloat(noPriceFormatted)}
+                          format={(val) => Math.round(val).toString()}
+                        />
+                        ¢
+                      </>
+                    )}
                   </span>
                 </button>
               </>
@@ -1225,7 +1286,17 @@ const TradingPanel = () => {
                 >
                   <span>Sell Up</span>
                   <span className={`text-xs font-semibold ${isMarketEnded ? 'text-gray-500' : selectedOutcome === 'up' ? 'text-green-400' : 'text-gray-400'}`}>
-                    {isMarketEnded ? 'Ended' : `${yesSellPriceFormatted}¢`}
+                    {isMarketEnded || yesSellPriceFormatted === 'ERROR' ? (
+                      isMarketEnded ? 'Ended' : 'ERROR'
+                    ) : (
+                      <>
+                        <AnimatedPrice
+                          value={parseFloat(yesSellPriceFormatted)}
+                          format={(val) => Math.round(val).toString()}
+                        />
+                        ¢
+                      </>
+                    )}
                   </span>
                 </button>
                 {/* Sell Down Button */}
@@ -1245,7 +1316,17 @@ const TradingPanel = () => {
                 >
                   <span>Sell Down</span>
                   <span className={`text-xs font-semibold ${isMarketEnded ? 'text-gray-500' : selectedOutcome === 'down' ? 'text-red-400' : 'text-gray-400'}`}>
-                    {isMarketEnded ? 'Ended' : `${noSellPriceFormatted}¢`}
+                    {isMarketEnded || noSellPriceFormatted === 'ERROR' ? (
+                      isMarketEnded ? 'Ended' : 'ERROR'
+                    ) : (
+                      <>
+                        <AnimatedPrice
+                          value={parseFloat(noSellPriceFormatted)}
+                          format={(val) => Math.round(val).toString()}
+                        />
+                        ¢
+                      </>
+                    )}
                   </span>
                 </button>
               </>
@@ -1468,7 +1549,21 @@ const TradingPanel = () => {
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-gray-500">Current:</span>
                   <span className="text-gray-300 font-mono">
-                    {selectedOutcome === 'up' ? yesPriceFormatted : noPriceFormatted}¢
+                    {(() => {
+                      const price = selectedOutcome === 'up' ? yesPriceFormatted : noPriceFormatted;
+                      if (price === 'Ended' || price === 'ERROR') {
+                        return `${price}¢`;
+                      }
+                      return (
+                        <>
+                          <AnimatedPrice
+                            value={parseFloat(price)}
+                            format={(val) => Math.round(val).toString()}
+                          />
+                          ¢
+                        </>
+                      );
+                    })()}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-xs">

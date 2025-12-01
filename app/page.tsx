@@ -6,6 +6,7 @@ import TradingViewChart from '@/components/TradingViewChart'
 import TradingPanel from '@/components/TradingPanel'
 import ChartControls from '@/components/ChartControls'
 import OrderBook, { OrderBookHandle } from '@/components/OrderBook'
+import AnimatedPrice from '@/components/AnimatedPrice'
 import { TradingProvider, useTradingContext } from '@/contexts/TradingContext'
 import { useWallet } from '@/contexts/WalletContext'
 
@@ -318,7 +319,15 @@ function TerminalContent() {
                         </td>
                         <td className="py-3 px-4 text-right text-white">{position.size.toFixed(2)}</td>
                         <td className="py-3 px-4 text-right text-gray-400">{(position.avgPrice * 100).toFixed(1)}¢</td>
-                        <td className="py-3 px-4 text-right text-white">{(position.currentPrice * 100).toFixed(1)}¢</td>
+                        <td className="py-3 px-4 text-right text-white">
+                          <>
+                            <AnimatedPrice
+                              value={position.currentPrice * 100}
+                              format={(val) => val.toFixed(1)}
+                            />
+                            ¢
+                          </>
+                        </td>
                         <td className={`py-3 px-4 text-right ${position.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                           {position.pnl >= 0 ? '+' : ''}${position.pnl.toFixed(2)}
                         </td>
@@ -367,7 +376,15 @@ function TerminalContent() {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-right text-white">{order.size.toFixed(2)}</td>
-                        <td className="py-3 px-4 text-right text-white">{(order.price * 100).toFixed(1)}¢</td>
+                        <td className="py-3 px-4 text-right text-white">
+                          <>
+                            <AnimatedPrice
+                              value={order.price * 100}
+                              format={(val) => val.toFixed(1)}
+                            />
+                            ¢
+                          </>
+                        </td>
                         <td className="py-3 px-4 text-right">
                           <span className={`text-xs px-2 py-0.5 rounded ${
                             order.status === 'live' ? 'bg-green-900/50 text-green-400' : 'bg-gray-800 text-gray-400'
@@ -424,7 +441,15 @@ function TerminalContent() {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-right text-white">{trade.size.toFixed(2)}</td>
-                        <td className="py-3 px-4 text-right text-white">{(trade.price * 100).toFixed(1)}¢</td>
+                        <td className="py-3 px-4 text-right text-white">
+                          <>
+                            <AnimatedPrice
+                              value={trade.price * 100}
+                              format={(val) => val.toFixed(1)}
+                            />
+                            ¢
+                          </>
+                        </td>
                         <td className="py-3 px-4 text-right text-white">${trade.total.toFixed(2)}</td>
                       </tr>
                     ))
