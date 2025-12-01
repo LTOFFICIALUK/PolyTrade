@@ -1,0 +1,10 @@
+# Place MetaMask and Phantom SVG logos here
+# 
+# Files to add:
+# - metamask.svg
+# - phantom.svg
+#
+# These will be accessible at:
+# - /wallets/metamask.svg
+# - /wallets/phantom.svg
+

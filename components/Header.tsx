@@ -1,17 +1,69 @@
 'use client'
 
 import { useRouter, usePathname } from 'next/navigation'
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect, useCallback } from 'react'
 import { useWallet } from '@/contexts/WalletContext'
 import ConnectWalletModal from './ConnectWalletModal'
+import PolymarketAuthModal from './PolymarketAuthModal'
+
+interface BalanceData {
+  portfolioValue: number
+  cashBalance: number
+}
 
 const Header = () => {
   const router = useRouter()
   const pathname = usePathname()
-  const { isConnected, walletAddress, disconnectWallet } = useWallet()
+  const { isConnected, walletAddress, disconnectWallet, isPolymarketAuthenticated } = useWallet()
   const [showConnectModal, setShowConnectModal] = useState(false)
+  const [showPolymarketAuthModal, setShowPolymarketAuthModal] = useState(false)
   const [isProfileMenuVisible, setIsProfileMenuVisible] = useState(false)
   const profileMenuRef = useRef<HTMLDivElement | null>(null)
+  const [balances, setBalances] = useState<BalanceData>({ portfolioValue: 0, cashBalance: 0 })
+  const [isLoadingBalances, setIsLoadingBalances] = useState(false)
+
+  // Format currency
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value)
+  }
+
+  // Fetch balances from API
+  const fetchBalances = useCallback(async () => {
+    if (!walletAddress) {
+      setBalances({ portfolioValue: 0, cashBalance: 0 })
+      return
+    }
+
+    setIsLoadingBalances(true)
+    try {
+      const balanceRes = await fetch(`/api/user/balance?address=${walletAddress}`)
+      const balanceData = await balanceRes.json()
+      
+      setBalances({
+        portfolioValue: balanceData.portfolioValue || 0,
+        cashBalance: balanceData.cashBalance || 0,
+      })
+    } catch (error) {
+      console.error('Failed to fetch balances:', error)
+      setBalances({ portfolioValue: 0, cashBalance: 0 })
+    } finally {
+      setIsLoadingBalances(false)
+    }
+  }, [walletAddress])
+
+  // Fetch balances on mount and when auth changes
+  useEffect(() => {
+    fetchBalances()
+    
+    // Refresh balances every 30 seconds
+    const interval = setInterval(fetchBalances, 30000)
+    return () => clearInterval(interval)
+  }, [fetchBalances])
 
   const handleLogoClick = () => {
     router.push('/')
@@ -154,15 +206,32 @@ const Header = () => {
             </nav>
           </div>
           <div className="flex items-center space-x-6">
+            {/* Polymarket Auth Status/Button */}
+            {isConnected && !isPolymarketAuthenticated && (
+              <button
+                onClick={() => setShowPolymarketAuthModal(true)}
+                className="px-4 py-2 bg-purple-primary hover:bg-purple-hover text-white text-sm font-medium rounded transition-colors duration-200 focus:outline-none flex items-center gap-2"
+                title="Connect to Polymarket for fast trading"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                Connect to Polymarket
+              </button>
+            )}
             {/* Portfolio Balance */}
             <div className="flex flex-col">
               <span className="text-xs text-gray-400">Portfolio</span>
-              <span className="text-sm font-semibold text-green-400">$0.00</span>
+              <span className={`text-sm font-semibold ${isLoadingBalances ? 'text-gray-500' : 'text-green-400'}`}>
+                {isLoadingBalances ? '...' : formatCurrency(balances.portfolioValue)}
+              </span>
             </div>
             {/* Cash Balance */}
             <div className="flex flex-col">
               <span className="text-xs text-gray-400">Cash</span>
-              <span className="text-sm font-semibold text-green-400">$0.00</span>
+              <span className={`text-sm font-semibold ${isLoadingBalances ? 'text-gray-500' : 'text-green-400'}`}>
+                {isLoadingBalances ? '...' : formatCurrency(balances.cashBalance)}
+              </span>
             </div>
             {/* Deposit Button */}
             <button
@@ -219,6 +288,15 @@ const Header = () => {
       <ConnectWalletModal
         isOpen={showConnectModal}
         onClose={() => setShowConnectModal(false)}
+      />
+
+      {/* Polymarket Auth Modal */}
+      <PolymarketAuthModal
+        isOpen={showPolymarketAuthModal}
+        onClose={() => setShowPolymarketAuthModal(false)}
+        onSuccess={() => {
+          setShowPolymarketAuthModal(false)
+        }}
       />
     </header>
   )

@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useWallet } from '@/contexts/WalletContext'
+import { getBrowserProvider, ensurePolygonNetwork } from '@/lib/polymarket-auth'
+import { ethers } from 'ethers'
 
 interface ConnectWalletModalProps {
   isOpen: boolean
@@ -22,6 +24,7 @@ declare global {
       request: (args: { method: string; params?: any[] }) => Promise<any>
       isPhantom?: boolean
       providers?: any[]
+      isMetaMask?: boolean
     }
   }
 }
@@ -32,64 +35,69 @@ export default function ConnectWalletModal({ isOpen, onClose }: ConnectWalletMod
   const [error, setError] = useState('')
   const [isConnecting, setIsConnecting] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [walletType, setWalletType] = useState<'metamask' | 'phantom' | null>(null)
 
   useEffect(() => {
     setMounted(true)
+    // Detect available wallets
+    if (typeof window !== 'undefined') {
+      if (window.ethereum?.isMetaMask) {
+        setWalletType('metamask')
+      } else if ((window as any).phantom?.ethereum || window.ethereum?.isPhantom) {
+        setWalletType('phantom')
+      }
+    }
   }, [])
 
-  const handleConnectPhantom = async () => {
+  const handleConnectWallet = async (preferredType?: 'metamask' | 'phantom') => {
     setError('')
     setIsConnecting(true)
 
     try {
-      // Check if Phantom is available - Phantom can expose itself in different ways
-      let phantomProvider = null
-
-      // Method 1: Check window.phantom.ethereum (primary method)
-      if ((window as any).phantom?.ethereum) {
-        phantomProvider = (window as any).phantom.ethereum
-      }
-      // Method 2: Check if window.ethereum is Phantom
-      else if (window.ethereum && (window.ethereum as any).isPhantom) {
-        phantomProvider = window.ethereum
-      }
-      // Method 3: Check providers array for Phantom
-      else if (window.ethereum && (window.ethereum as any).providers) {
-        const providers = (window.ethereum as any).providers
-        phantomProvider = Array.isArray(providers)
-          ? providers.find((p: any) => p.isPhantom)
-          : null
-      }
-
-      if (!phantomProvider) {
-        setError('Phantom is not installed. Please install Phantom extension first.')
+      const provider = getBrowserProvider()
+      if (!provider) {
+        setError('No wallet found. Please install MetaMask or Phantom extension.')
         setIsConnecting(false)
         return
       }
 
-      // Request account access from Phantom
-      const accounts = await phantomProvider.request({
-        method: 'eth_requestAccounts',
-      })
+      // Request account access FIRST (required before switching networks)
+      const accounts = await provider.send('eth_requestAccounts', [])
 
-      if (accounts && accounts.length > 0) {
-        const address = accounts[0]
-        connectWallet(address)
-        onClose()
-      } else {
-        setError('No accounts found. Please make sure your Phantom wallet is unlocked.')
+      if (!accounts || accounts.length === 0) {
+        setError('No accounts found. Please make sure your wallet is unlocked.')
+        setIsConnecting(false)
+        return
       }
+
+      // Now ensure we're on Polygon network (after authorization)
+      await ensurePolygonNetwork(provider)
+
+      const address = accounts[0]
+      connectWallet(address)
+      onClose()
     } catch (err: any) {
-      console.error('Phantom connection error:', err)
+      console.error('Wallet connection error:', err)
       if (err.code === 4001) {
-        setError('Connection rejected. Please approve the connection request in Phantom.')
+        if (err.message?.includes('network switch')) {
+          setError('Network switch was rejected. Please approve the switch to Polygon in your wallet.')
+        } else {
+          setError('Connection rejected. Please approve the connection request in your wallet.')
+        }
+      } else if (err.message?.includes('network switch') || err.message?.includes('switch network')) {
+        setError('Please approve the network switch to Polygon in your wallet.')
+      } else if (err.message?.includes('rejected')) {
+        setError(err.message)
       } else {
-        setError('Failed to connect wallet. Please make sure Phantom is installed, enabled, and unlocked.')
+        setError('Failed to connect wallet. Please make sure your wallet is installed, enabled, and unlocked.')
       }
     } finally {
       setIsConnecting(false)
     }
   }
+
+  const handleConnectPhantom = () => handleConnectWallet('phantom')
+  const handleConnectMetaMask = () => handleConnectWallet('metamask')
 
   useEffect(() => {
     if (isOpen) {
@@ -152,7 +160,13 @@ export default function ConnectWalletModal({ isOpen, onClose }: ConnectWalletMod
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div 
+          className="flex-1 overflow-y-auto p-6 scrollbar-hide"
+          style={{ 
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
+          }}
+        >
           <div className="space-y-6">
             {/* Important Notice */}
             <div className="bg-purple-primary/10 border border-purple-primary/30 rounded-lg p-4">
@@ -172,24 +186,23 @@ export default function ConnectWalletModal({ isOpen, onClose }: ConnectWalletMod
                 </svg>
                 <div>
                   <h3 className="text-purple-primary font-semibold mb-1">
-                    Connect with Your Polymarket Wallet
+                    Trade with Your Polymarket Account
                   </h3>
                   <p className="text-gray-300 text-sm">
-                    Log in using your Polymarket wallet through Phantom. First export your private
-                    key from Polymarket, then import it into Phantom.
+                    You can use your existing Polymarket wallet! Export your private key from Polymarket and import it into MetaMask or Phantom, then connect here to trade with your Polymarket account.
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Instructions Toggle */}
+            {/* Polymarket Wallet Instructions */}
             <div>
               <button
                 onClick={() => setShowInstructions(!showInstructions)}
                 className="w-full flex items-center justify-between p-4 bg-black/50 border border-gray-800 rounded-lg hover:bg-black/70 transition-colors"
               >
                 <span className="text-white font-medium">
-                  How to Log In to Polymarket
+                  How to Use Your Polymarket Wallet
                 </span>
                 <svg
                   className={`w-5 h-5 text-gray-400 transition-transform ${
@@ -213,37 +226,99 @@ export default function ConnectWalletModal({ isOpen, onClose }: ConnectWalletMod
                   <div>
                     <h4 className="text-white font-semibold mb-3">Step-by-Step Instructions:</h4>
                     <ol className="list-decimal list-inside space-y-3 text-gray-300 text-sm">
-                      <li>Go to Polymarket Settings</li>
-                      <li>Click "Export private key"</li>
-                      <li>Copy your private key</li>
-                      <li>Open Phantom extension</li>
-                      <li>Click "Add wallet" and paste in your private key</li>
-                      <li>Go back to PolyTrade and click "Connect wallet" to log in with your Polymarket wallet through Phantom</li>
+                      <li>Go to <a href="https://polymarket.com" target="_blank" rel="noopener noreferrer" className="text-purple-primary hover:underline">Polymarket.com</a> and log in</li>
+                      <li>Go to Settings → Security → Export Private Key</li>
+                      <li>Copy your private key (keep it secure!)</li>
+                      <li>Open MetaMask or Phantom extension</li>
+                      <li>Click "Import Account" or "Add Wallet"</li>
+                      <li>Paste your private key to import your Polymarket wallet</li>
+                      <li>Come back here and click "Connect Wallet" to use your Polymarket account</li>
                     </ol>
                   </div>
 
                   <div className="pt-4 border-t border-gray-800 bg-blue-900/20 border border-blue-800/50 rounded p-3">
-                    <p className="text-blue-400 text-sm font-semibold mb-1">ℹ️ Important</p>
+                    <p className="text-blue-400 text-sm font-semibold mb-1">What This Means</p>
                     <p className="text-gray-300 text-xs">
-                      You need to import your Polymarket wallet into Phantom first. Once imported,
-                      you can connect to PolyTrade using the "Connect wallet" button below.
+                      Once imported, you'll have access to all your Polymarket funds, positions, and trading history. All trades will use your Polymarket account balance.
                     </p>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Phantom Connection */}
+
+            {/* Wallet Connection Options */}
             <div>
               {error && (
                 <div className="mb-4 p-3 bg-red-900/20 border border-red-800/50 rounded">
                   <p className="text-sm text-red-400">{error}</p>
                 </div>
               )}
-              <div className="bg-black/50 border border-gray-800 rounded-lg p-4">
-                <p className="text-gray-300 text-sm mb-4">
-                  Make sure you've imported your Polymarket wallet into Phantom before connecting.
-                </p>
+              
+              <div className="space-y-3">
+                {/* MetaMask Option */}
+                <button
+                  onClick={handleConnectMetaMask}
+                  disabled={isConnecting || !window.ethereum?.isMetaMask}
+                  className="w-full p-4 bg-black/50 border border-gray-800 rounded-lg hover:bg-black/70 transition-colors flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <img 
+                      src="/wallets/MetaMask-icon-fox.svg" 
+                      alt="MetaMask" 
+                      className="w-6 h-6"
+                    />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <p className="text-white font-medium">MetaMask</p>
+                    <p className="text-gray-400 text-xs">
+                      {window.ethereum?.isMetaMask ? 'Connect with MetaMask' : 'Install MetaMask extension'}
+                    </p>
+                  </div>
+                  {!window.ethereum?.isMetaMask && (
+                    <a
+                      href="https://metamask.io/download/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-xs text-blue-400 hover:text-blue-300"
+                    >
+                      Install →
+                    </a>
+                  )}
+                </button>
+
+                {/* Phantom Option */}
+                <button
+                  onClick={handleConnectPhantom}
+                  disabled={isConnecting || (!(window as any).phantom?.ethereum && !window.ethereum?.isPhantom)}
+                  className="w-full p-4 bg-black/50 border border-gray-800 rounded-lg hover:bg-black/70 transition-colors flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <img 
+                      src="/wallets/Phantom-Icon_Transparent_Purple.svg" 
+                      alt="Phantom" 
+                      className="w-6 h-6"
+                    />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <p className="text-white font-medium">Phantom</p>
+                    <p className="text-gray-400 text-xs">
+                      {((window as any).phantom?.ethereum || window.ethereum?.isPhantom) ? 'Connect with Phantom' : 'Install Phantom extension'}
+                    </p>
+                  </div>
+                  {!(window as any).phantom?.ethereum && !window.ethereum?.isPhantom && (
+                    <a
+                      href="https://phantom.app/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-xs text-blue-400 hover:text-blue-300"
+                    >
+                      Install →
+                    </a>
+                  )}
+                </button>
               </div>
             </div>
           </div>
@@ -257,39 +332,6 @@ export default function ConnectWalletModal({ isOpen, onClose }: ConnectWalletMod
             disabled={isConnecting}
           >
             Cancel
-          </button>
-          <button
-            onClick={handleConnectPhantom}
-            disabled={isConnecting}
-            className="flex-1 px-4 py-2 bg-purple-primary hover:bg-purple-hover text-white rounded transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {isConnecting ? (
-              <>
-                <svg
-                  className="animate-spin h-4 w-4 text-white"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  ></circle>
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
-                </svg>
-                Connecting...
-              </>
-            ) : (
-              'Connect Wallet'
-            )}
           </button>
         </div>
       </div>

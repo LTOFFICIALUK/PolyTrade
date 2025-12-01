@@ -1,7 +1,8 @@
 'use server'
 
 import { NextResponse } from 'next/server'
-import { getUserPositions } from '@/lib/websocket-server'
+
+const POLYMARKET_CLOB_API = 'https://clob.polymarket.com'
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
@@ -12,25 +13,35 @@ export async function GET(req: Request) {
   }
 
   try {
-    // Query WebSocket server for real-time positions
-    const positions = await getUserPositions(walletAddress)
-    return NextResponse.json({ positions, count: Array.isArray(positions) ? positions.length : 0 })
-  } catch (error: any) {
-    // Try direct fetch as fallback
-    try {
-      const directResponse = await fetch(`http://localhost:8081/api/positions?address=${walletAddress}`, {
-        cache: 'no-store',
-      })
-      if (directResponse.ok) {
-        const data = await directResponse.json()
-        if (data.success && data.data) {
-          return NextResponse.json({ positions: data.data, count: Array.isArray(data.data) ? data.data.length : 0 })
-        }
+    // Fetch current positions from Polymarket CLOB API
+    const response = await fetch(
+      `${POLYMARKET_CLOB_API}/positions?user=${walletAddress}`,
+      { 
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store' 
       }
-    } catch (directError) {
-      console.error('Direct fetch also failed:', directError)
+    )
+
+    if (response.ok) {
+      const data = await response.json()
+      const positions = Array.isArray(data) ? data : (data.positions || [])
+      return NextResponse.json({ 
+        positions, 
+        count: positions.length,
+        lastUpdated: new Date().toISOString(),
+      })
+    } else {
+      console.error('Polymarket positions API error:', response.status)
     }
-    return NextResponse.json({ positions: [], count: 0 })
+  } catch (error: any) {
+    console.error('Positions fetch error:', error)
   }
+
+  // Return empty if fetch fails
+  return NextResponse.json({ 
+    positions: [], 
+    count: 0,
+    lastUpdated: new Date().toISOString(),
+  })
 }
 
