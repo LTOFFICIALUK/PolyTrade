@@ -1,6 +1,49 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import Link from 'next/link'
+import { useWallet } from '@/contexts/WalletContext'
+
+interface BalanceData {
+  portfolioValue: number
+  cashBalance: number
+  positionsValue: number
+  lastUpdated: string
+}
+
+interface Position {
+  asset: string
+  conditionId: string
+  size: number
+  avgPrice: number
+  currentValue: number
+  cashPnl: number
+  percentPnl: number
+  title: string
+  outcome: string
+  curPrice: number
+}
+
+interface ClosedPosition {
+  conditionId: string
+  avgPrice: number
+  totalBought: number
+  realizedPnl: number
+  timestamp: number
+  title: string
+  outcome: string
+}
+
+interface Trade {
+  id: string
+  market: string
+  side: 'BUY' | 'SELL'
+  size: string
+  price: string
+  match_time: string
+  outcome: string
+  title: string
+}
 
 interface ProfileStats {
   totalTrades: number
@@ -8,38 +51,19 @@ interface ProfileStats {
   totalPnL: number
   portfolioValue: number
   cashBalance: number
+  positionsValue: number
   activePositions: number
-  favoriteStrategy: string
-  joinDate: string
-}
-
-interface BalanceData {
-  portfolioValue: number
-  cashBalance: number
-  totalValue: number
-  lastUpdated: string
-}
-
-interface Position {
-  tokenId: string
-  market: string
-  side: string
-  shares: number
-  avgPrice: number
-  currentPrice: number
-  pnl: number
-}
-
-interface Trade {
-  tradeId: string
-  tokenId: string
-  market: string
-  side: string
-  shares: number
-  price: number
-  timestamp: string
-  outcome: string
-  pnl: number
+  closedPositions: number
+  totalWins: number
+  totalLosses: number
+  avgTradeSize: number
+  bestTrade: number
+  worstTrade: number
+  avgProfit: number
+  avgLoss: number
+  wlRatio: number
+  totalVolume: number
+  profitFactor: number
 }
 
 export default function ProfilePage({
@@ -48,30 +72,53 @@ export default function ProfilePage({
   params: { address: string }
 }) {
   const { address } = params
+  const { walletAddress } = useWallet()
   const [balance, setBalance] = useState<BalanceData | null>(null)
   const [positions, setPositions] = useState<Position[]>([])
-  const [history, setHistory] = useState<Trade[]>([])
+  const [closedPositions, setClosedPositions] = useState<ClosedPosition[]>([])
+  const [trades, setTrades] = useState<Trade[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [copiedAddress, setCopiedAddress] = useState(false)
+
+  const isOwnProfile = walletAddress?.toLowerCase() === address.toLowerCase()
 
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true)
+      setError(null)
+
       try {
-        // Fetch balance
-        const balanceRes = await fetch(`/api/user/balance?address=${address}`)
-        const balanceData = await balanceRes.json()
-        setBalance(balanceData)
+        // Fetch all data in parallel
+        const [balanceRes, positionsRes, closedRes, tradesRes] = await Promise.all([
+          fetch(`/api/user/balance?address=${address}`),
+          fetch(`/api/user/positions?address=${address}`),
+          fetch(`/api/user/closed-positions?address=${address}&limit=100`),
+          fetch(`/api/user/trades?address=${address}&limit=500`),
+        ])
 
-        // Fetch positions
-        const positionsRes = await fetch(`/api/user/positions?address=${address}`)
-        const positionsData = await positionsRes.json()
-        setPositions(positionsData.positions || [])
+        if (balanceRes.ok) {
+          const balanceData = await balanceRes.json()
+          setBalance(balanceData)
+        }
 
-        // Fetch history
-        const historyRes = await fetch(`/api/user/history?address=${address}&limit=100`)
-        const historyData = await historyRes.json()
-        setHistory(historyData.trades || [])
-      } catch (error) {
-        console.error('Error fetching profile data:', error)
+        if (positionsRes.ok) {
+          const positionsData = await positionsRes.json()
+          setPositions(positionsData.positions || [])
+        }
+
+        if (closedRes.ok) {
+          const closedData = await closedRes.json()
+          setClosedPositions(closedData.positions || [])
+        }
+
+        if (tradesRes.ok) {
+          const tradesData = await tradesRes.json()
+          setTrades(tradesData.trades || [])
+        }
+      } catch (err) {
+        console.error('Error fetching profile data:', err)
+        setError('Failed to load profile data. Please try again.')
       } finally {
         setLoading(false)
       }
@@ -80,32 +127,75 @@ export default function ProfilePage({
     fetchData()
   }, [address])
 
-  // Calculate stats from real data
-  const calculateStats = (): ProfileStats => {
-    const totalTrades = history.length
-    const wins = history.filter((t) => t.outcome === 'WIN').length
-    const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0
-    const totalPnL = history.reduce((sum, t) => sum + (t.pnl || 0), 0)
-    const portfolioValue = balance?.portfolioValue || 0
-    const cashBalance = balance?.cashBalance || 0
-    const activePositions = positions.length
+  // Calculate comprehensive stats from real data
+  const profileStats = useMemo((): ProfileStats => {
+    // Win/Loss from closed positions
+    const wins = closedPositions.filter((p) => p.realizedPnl > 0)
+    const losses = closedPositions.filter((p) => p.realizedPnl < 0)
 
-    // Find most used strategy (mock for now)
-    const favoriteStrategy = 'Momentum Breakout'
+    const totalClosedPositions = closedPositions.length
+    const winRate = totalClosedPositions > 0 
+      ? (wins.length / totalClosedPositions) * 100 
+      : 0
+
+    // Total realized PnL
+    const totalPnL = closedPositions.reduce((sum, p) => sum + p.realizedPnl, 0)
+
+    // Average metrics
+    const avgProfit = wins.length > 0
+      ? wins.reduce((sum, p) => sum + p.realizedPnl, 0) / wins.length
+      : 0
+
+    const avgLoss = losses.length > 0
+      ? losses.reduce((sum, p) => sum + p.realizedPnl, 0) / losses.length
+      : 0
+
+    // Best/worst trades
+    const pnlValues = closedPositions.map((p) => p.realizedPnl)
+    const bestTrade = pnlValues.length > 0 ? Math.max(...pnlValues) : 0
+    const worstTrade = pnlValues.length > 0 ? Math.min(...pnlValues) : 0
+
+    // W/L Ratio
+    const wlRatio = losses.length > 0 && avgLoss !== 0
+      ? Math.abs(avgProfit / avgLoss)
+      : avgProfit > 0 ? Infinity : 0
+
+    // Total volume from trades
+    const totalVolume = trades.reduce((sum, t) => {
+      const price = parseFloat(t.price) || 0
+      const size = parseFloat(t.size) || 0
+      return sum + (price * size)
+    }, 0)
+
+    // Average trade size
+    const avgTradeSize = trades.length > 0 ? totalVolume / trades.length : 0
+
+    // Profit factor
+    const totalProfit = wins.reduce((sum, p) => sum + p.realizedPnl, 0)
+    const totalLoss = Math.abs(losses.reduce((sum, p) => sum + p.realizedPnl, 0))
+    const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0
 
     return {
-      totalTrades,
+      totalTrades: trades.length,
       winRate: Math.round(winRate * 10) / 10,
       totalPnL: Math.round(totalPnL * 100) / 100,
-      portfolioValue,
-      cashBalance,
-      activePositions,
-      favoriteStrategy,
-      joinDate: '2024-01-01', // Would come from user data
+      portfolioValue: balance?.portfolioValue || 0,
+      cashBalance: balance?.cashBalance || 0,
+      positionsValue: balance?.positionsValue || 0,
+      activePositions: positions.length,
+      closedPositions: totalClosedPositions,
+      totalWins: wins.length,
+      totalLosses: losses.length,
+      avgTradeSize: Math.round(avgTradeSize * 100) / 100,
+      bestTrade: Math.round(bestTrade * 100) / 100,
+      worstTrade: Math.round(worstTrade * 100) / 100,
+      avgProfit: Math.round(avgProfit * 100) / 100,
+      avgLoss: Math.round(avgLoss * 100) / 100,
+      wlRatio: wlRatio === Infinity ? 999 : Math.round(wlRatio * 100) / 100,
+      totalVolume: Math.round(totalVolume * 100) / 100,
+      profitFactor: profitFactor === Infinity ? 999 : Math.round(profitFactor * 100) / 100,
     }
-  }
-
-  const profileStats = calculateStats()
+  }, [balance, positions, closedPositions, trades])
 
   // Format wallet address for display
   const formatAddress = (addr: string) => {
@@ -114,9 +204,34 @@ export default function ProfilePage({
   }
 
   // Copy address to clipboard
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(address)
-    // Could add a toast notification here
+  const handleCopyAddress = async () => {
+    try {
+      await navigator.clipboard.writeText(address)
+      setCopiedAddress(true)
+      setTimeout(() => setCopiedAddress(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy address:', err)
+    }
+  }
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="bg-black text-white min-h-screen">
+        <div className="px-4 sm:px-6 py-6 sm:py-8">
+          <h1 className="text-2xl sm:text-3xl font-bold mb-6">Profile</h1>
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <svg className="w-12 h-12 animate-spin text-purple-primary mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              <p className="text-gray-400">Loading profile data...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -126,155 +241,268 @@ export default function ProfilePage({
         <div className="mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold mb-2">Profile</h1>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 bg-black/50 border border-gray-800 rounded-lg px-4 py-2">
+              <div className="flex items-center gap-3 mb-2">
+                <h1 className="text-2xl sm:text-3xl font-bold">Profile</h1>
+                {isOwnProfile && (
+                  <span className="px-2 py-1 bg-purple-primary/20 text-purple-primary text-xs font-medium rounded">
+                    Your Profile
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2 bg-gray-900/50 border border-gray-800 rounded-lg px-4 py-2">
                   <span className="text-gray-400 text-sm">Wallet:</span>
                   <span className="text-white font-mono text-sm">{formatAddress(address)}</span>
                   <button
-                    onClick={copyToClipboard}
+                    onClick={handleCopyAddress}
                     className="text-gray-400 hover:text-white transition-colors ml-2"
-                    title="Copy full address"
+                    title={copiedAddress ? 'Copied!' : 'Copy full address'}
+                    aria-label="Copy address"
                   >
-                    <svg
-                      className="w-4 h-4"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                      />
-                    </svg>
+                    {copiedAddress ? (
+                      <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    )}
                   </button>
                 </div>
                 <a
                   href={`https://polygonscan.com/address/${address}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-purple-primary hover:text-purple-hover text-sm font-medium transition-colors"
+                  className="text-purple-primary hover:text-purple-hover text-sm font-medium transition-colors flex items-center gap-1"
                 >
-                  View on PolygonScan →
+                  View on PolygonScan
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
                 </a>
               </div>
             </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <div className="text-xs text-gray-400">Member Since</div>
-                <div className="text-white font-semibold">
-                  {new Date(profileStats.joinDate).toLocaleDateString('en-US', {
-                    month: 'short',
-                    year: 'numeric',
-                  })}
-                </div>
-              </div>
+            <div className="flex items-center gap-3">
+              {isOwnProfile && (
+                <>
+                  <Link
+                    href="/analytics"
+                    className="px-4 py-2 bg-gray-900 border border-gray-800 text-white rounded text-sm font-medium hover:bg-gray-800 transition-colors"
+                  >
+                    View Analytics
+                  </Link>
+                  <Link
+                    href="/history"
+                    className="px-4 py-2 bg-gray-900 border border-gray-800 text-white rounded text-sm font-medium hover:bg-gray-800 transition-colors"
+                  >
+                    Trade History
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Statistics Grid */}
+        {/* Error State */}
+        {error && (
+          <div className="bg-red-900/20 border border-red-800 rounded-lg p-4 mb-6">
+            <p className="text-red-400 text-sm">{error}</p>
+          </div>
+        )}
+
+        {/* Portfolio Overview */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
-          <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
-            <div className="text-xs text-gray-400 mb-1">Total Trades</div>
-            <div className="text-white font-bold text-2xl">{profileStats.totalTrades}</div>
-          </div>
-
-          <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
-            <div className="text-xs text-gray-400 mb-1">Win Rate</div>
-            <div className="text-green-400 font-bold text-2xl">
-              {profileStats.winRate}%
-            </div>
-          </div>
-
-          <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
-            <div className="text-xs text-gray-400 mb-1">Total PnL</div>
-            <div className="text-green-400 font-bold text-2xl">
-              +${profileStats.totalPnL.toFixed(2)}
-            </div>
-          </div>
-
-          <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
+          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
             <div className="text-xs text-gray-400 mb-1">Portfolio Value</div>
             <div className="text-white font-bold text-2xl">
               ${profileStats.portfolioValue.toFixed(2)}
             </div>
+            <div className="text-xs text-gray-500 mt-1">Total value</div>
           </div>
 
-          <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
+          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
             <div className="text-xs text-gray-400 mb-1">Cash Balance</div>
             <div className="text-white font-bold text-2xl">
               ${profileStats.cashBalance.toFixed(2)}
             </div>
+            <div className="text-xs text-gray-500 mt-1">USDC available</div>
           </div>
 
-          <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
-            <div className="text-xs text-gray-400 mb-1">Active Positions</div>
+          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+            <div className="text-xs text-gray-400 mb-1">Positions Value</div>
             <div className="text-white font-bold text-2xl">
-              {profileStats.activePositions}
+              ${profileStats.positionsValue.toFixed(2)}
             </div>
+            <div className="text-xs text-gray-500 mt-1">{profileStats.activePositions} active</div>
           </div>
 
-          <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
-            <div className="text-xs text-gray-400 mb-1">Favorite Strategy</div>
-            <div className="text-white font-bold text-lg">
-              {profileStats.favoriteStrategy}
+          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+            <div className="text-xs text-gray-400 mb-1">Total Realized PnL</div>
+            <div className={`font-bold text-2xl ${profileStats.totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {profileStats.totalPnL >= 0 ? '+' : ''}${profileStats.totalPnL.toFixed(2)}
             </div>
           </div>
         </div>
 
-        {/* Additional Info Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Trading Activity */}
-          <div className="bg-black/50 rounded-lg p-6 border border-gray-800">
+        {/* Trading Statistics */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
+          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+            <div className="text-xs text-gray-400 mb-1">Total Trades</div>
+            <div className="text-white font-bold text-2xl">{profileStats.totalTrades}</div>
+          </div>
+
+          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+            <div className="text-xs text-gray-400 mb-1">Win Rate</div>
+            <div className={`font-bold text-2xl ${profileStats.winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+              {profileStats.winRate}%
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              {profileStats.totalWins}W / {profileStats.totalLosses}L
+            </div>
+          </div>
+
+          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+            <div className="text-xs text-gray-400 mb-1">Total Volume</div>
+            <div className="text-white font-bold text-2xl">
+              ${profileStats.totalVolume.toFixed(2)}
+            </div>
+          </div>
+
+          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+            <div className="text-xs text-gray-400 mb-1">Closed Positions</div>
+            <div className="text-white font-bold text-2xl">{profileStats.closedPositions}</div>
+          </div>
+        </div>
+
+        {/* Performance Metrics */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <div className="bg-gray-900/50 rounded-lg p-6 border border-gray-800">
             <h2 className="text-lg font-semibold text-white mb-4">Trading Activity</h2>
             <div className="space-y-3">
               <div className="flex justify-between items-center">
-                <span className="text-gray-400 text-sm">Total Volume Traded</span>
-                <span className="text-white font-semibold">$45,230.50</span>
-              </div>
-              <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-sm">Avg Trade Size</span>
-                <span className="text-white font-semibold">$183.12</span>
+                <span className="text-white font-semibold">${profileStats.avgTradeSize.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-sm">Best Trade</span>
-                <span className="text-green-400 font-semibold">+$89.50</span>
+                <span className={`font-semibold ${profileStats.bestTrade >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {profileStats.bestTrade >= 0 ? '+' : ''}${profileStats.bestTrade.toFixed(2)}
+                </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-sm">Worst Trade</span>
-                <span className="text-red-400 font-semibold">-$23.40</span>
+                <span className={`font-semibold ${profileStats.worstTrade >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {profileStats.worstTrade >= 0 ? '+' : ''}${profileStats.worstTrade.toFixed(2)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400 text-sm">Active Positions</span>
+                <span className="text-white font-semibold">{profileStats.activePositions}</span>
               </div>
             </div>
           </div>
 
-          {/* Performance Metrics */}
-          <div className="bg-black/50 rounded-lg p-6 border border-gray-800">
+          <div className="bg-gray-900/50 rounded-lg p-6 border border-gray-800">
             <h2 className="text-lg font-semibold text-white mb-4">Performance Metrics</h2>
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-sm">W/L Ratio</span>
-                <span className="text-white font-semibold">2.01</span>
+                <span className="text-white font-semibold">
+                  {profileStats.wlRatio === 999 ? '∞' : profileStats.wlRatio.toFixed(2)}
+                </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-sm">Avg Profit</span>
-                <span className="text-green-400 font-semibold">+$12.45</span>
+                <span className="text-green-400 font-semibold">
+                  +${profileStats.avgProfit.toFixed(2)}
+                </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-sm">Avg Loss</span>
-                <span className="text-red-400 font-semibold">-$6.20</span>
+                <span className="text-red-400 font-semibold">
+                  ${profileStats.avgLoss.toFixed(2)}
+                </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-sm">Profit Factor</span>
-                <span className="text-white font-semibold">2.10</span>
+                <span className="text-white font-semibold">
+                  {profileStats.profitFactor === 999 ? '∞' : profileStats.profitFactor.toFixed(2)}
+                </span>
               </div>
             </div>
           </div>
         </div>
+
+        {/* Active Positions */}
+        {positions.length > 0 && (
+          <div className="bg-gray-900/50 rounded-lg p-6 border border-gray-800 mb-8">
+            <h2 className="text-lg font-semibold text-white mb-4">
+              Active Positions ({positions.length})
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-gray-400 border-b border-gray-800">
+                  <tr>
+                    <th className="text-left py-3 px-4 font-medium">Market</th>
+                    <th className="text-left py-3 px-4 font-medium">Outcome</th>
+                    <th className="text-right py-3 px-4 font-medium">Size</th>
+                    <th className="text-right py-3 px-4 font-medium">Avg Price</th>
+                    <th className="text-right py-3 px-4 font-medium">Current</th>
+                    <th className="text-right py-3 px-4 font-medium">PnL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.slice(0, 10).map((position, index) => {
+                    const pnl = position.cashPnl || 0
+                    const pnlPercent = position.percentPnl || 0
+                    const pnlColor = pnl >= 0 ? 'text-green-400' : 'text-red-400'
+
+                    return (
+                      <tr key={`${position.conditionId}-${index}`} className="border-b border-gray-800">
+                        <td className="py-3 px-4">
+                          <div className="max-w-xs truncate text-white" title={position.title}>
+                            {position.title || 'Unknown Market'}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={position.outcome === 'Yes' ? 'text-green-400' : 'text-red-400'}>
+                            {position.outcome || '-'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right text-white font-mono">
+                          {position.size?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || '0'}
+                        </td>
+                        <td className="py-3 px-4 text-right text-white font-mono">
+                          {Math.round((position.avgPrice || 0) * 100)}¢
+                        </td>
+                        <td className="py-3 px-4 text-right text-white font-mono">
+                          {Math.round((position.curPrice || 0) * 100)}¢
+                        </td>
+                        <td className={`py-3 px-4 text-right font-mono ${pnlColor}`}>
+                          {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                          <span className="text-xs ml-1 opacity-70">
+                            ({pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(1)}%)
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {positions.length > 10 && (
+              <div className="mt-4 text-center">
+                <span className="text-sm text-gray-400">
+                  Showing 10 of {positions.length} positions
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+
       </div>
     </div>
   )
 }
-

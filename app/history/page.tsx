@@ -1,496 +1,514 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useWallet } from '@/contexts/WalletContext'
+import Link from 'next/link'
 
-interface Trade {
+interface PolymarketTrade {
+  id: string
+  taker_order_id?: string
+  market: string
+  asset_id: string
+  side: 'BUY' | 'SELL'
+  size: string
+  fee_rate_bps?: string
+  price: string
+  status: string
+  match_time: string
+  last_update?: string
+  outcome: string
+  title: string
+  slug?: string
+  icon?: string
+  owner: string
+  maker_address?: string
+  transaction_hash?: string
+  bucket_index?: number
+  type?: string
+}
+
+interface ClosedPosition {
+  proxyWallet: string
+  asset: string
+  conditionId: string
+  avgPrice: number
+  totalBought: number
+  realizedPnl: number
+  curPrice: number
+  timestamp: number
+  title: string
+  slug: string
+  icon: string
+  eventSlug: string
+  outcome: string
+  outcomeIndex: number
+  oppositeOutcome: string
+  oppositeAsset: string
+  endDate: string
+}
+
+interface DisplayTrade {
   id: string
   timestamp: string
   market: string
-  asset: string
-  side: 'Buy Yes' | 'Sell No' | 'Buy No' | 'Sell Yes'
+  title: string
+  side: string
   sideColor: string
   shares: number
-  costPerShare: string
+  price: number
+  priceDisplay: string
   totalCost: string
-  exitPrice?: string
-  exitShares?: number
-  exitTotal?: string
   pnl: string
+  pnlValue: number
   pnlColor: string
-  strategy: string
   status: 'Open' | 'Closed'
+  outcome: string
+  transactionHash?: string
 }
 
 export default function HistoryPage() {
-  const [outcomesOnly, setOutcomesOnly] = useState(false)
+  const { walletAddress, isConnected } = useWallet()
+  const [trades, setTrades] = useState<DisplayTrade[]>([])
+  const [closedPositions, setClosedPositions] = useState<ClosedPosition[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'trades' | 'positions'>('trades')
+  const [limit] = useState(50)
+  const [offset, setOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
 
-  // Mock trades data - same as analytics page
-  const allTrades: Trade[] = [
-    {
-      id: '1',
-      timestamp: '2024-01-15 14:32:15',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 100,
-      costPerShare: '45¢',
-      totalCost: '$45.00',
-      exitPrice: '52¢',
-      exitShares: 100,
-      exitTotal: '$52.00',
-      pnl: '+$7.00',
-      pnlColor: 'text-green-400',
-      strategy: 'Momentum Breakout',
-      status: 'Closed',
-    },
-    {
-      id: '2',
-      timestamp: '2024-01-15 13:15:42',
-      market: 'ETH > $5k',
-      asset: 'ETH',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 150,
-      costPerShare: '38¢',
-      totalCost: '$57.00',
-      exitPrice: '42¢',
-      exitShares: 150,
-      exitTotal: '$63.00',
-      pnl: '+$6.00',
-      pnlColor: 'text-green-400',
-      strategy: 'RSI Reversal',
-      status: 'Closed',
-    },
-    {
-      id: '3',
-      timestamp: '2024-01-15 12:08:23',
-      market: 'SOL > $200',
-      asset: 'SOL',
-      side: 'Sell No',
-      sideColor: 'text-red-400',
-      shares: 200,
-      costPerShare: '31¢',
-      totalCost: '$62.00',
-      exitPrice: '28¢',
-      exitShares: 200,
-      exitTotal: '$56.00',
-      pnl: '+$6.00',
-      pnlColor: 'text-green-400',
-      strategy: 'MACD Crossover',
-      status: 'Closed',
-    },
-    {
-      id: '4',
-      timestamp: '2024-01-15 11:45:10',
-      market: 'XRP > $2',
-      asset: 'XRP',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 75,
-      costPerShare: '42¢',
-      totalCost: '$31.50',
-      exitPrice: '38¢',
-      exitShares: 75,
-      exitTotal: '$28.50',
-      pnl: '-$3.00',
-      pnlColor: 'text-red-400',
-      strategy: 'Bollinger Squeeze',
-      status: 'Closed',
-    },
-    {
-      id: '5',
-      timestamp: '2024-01-15 10:22:55',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 250,
-      costPerShare: '40¢',
-      totalCost: '$100.00',
-      pnl: '+$12.50',
-      pnlColor: 'text-green-400',
-      strategy: 'Momentum Breakout',
-      status: 'Open',
-    },
-    {
-      id: '6',
-      timestamp: '2024-01-15 09:15:30',
-      market: 'ETH > $5k',
-      asset: 'ETH',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 180,
-      costPerShare: '35¢',
-      totalCost: '$63.00',
-      exitPrice: '41¢',
-      exitShares: 180,
-      exitTotal: '$73.80',
-      pnl: '+$10.80',
-      pnlColor: 'text-green-400',
-      strategy: 'RSI Reversal',
-      status: 'Closed',
-    },
-    {
-      id: '7',
-      timestamp: '2024-01-14 16:20:12',
-      market: 'SOL > $200',
-      asset: 'SOL',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 120,
-      costPerShare: '45¢',
-      totalCost: '$54.00',
-      exitPrice: '51¢',
-      exitShares: 120,
-      exitTotal: '$61.20',
-      pnl: '+$7.20',
-      pnlColor: 'text-green-400',
-      strategy: 'Momentum Breakout',
-      status: 'Closed',
-    },
-    {
-      id: '8',
-      timestamp: '2024-01-14 15:45:33',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 80,
-      costPerShare: '45¢',
-      totalCost: '$36.00',
-      exitPrice: '48¢',
-      exitShares: 80,
-      exitTotal: '$38.40',
-      pnl: '+$2.40',
-      pnlColor: 'text-green-400',
-      strategy: 'MACD Crossover',
-      status: 'Closed',
-    },
-    {
-      id: '9',
-      timestamp: '2024-01-14 14:10:05',
-      market: 'ETH > $5k',
-      asset: 'ETH',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 200,
-      costPerShare: '45¢',
-      totalCost: '$90.00',
-      exitPrice: '43¢',
-      exitShares: 200,
-      exitTotal: '$86.00',
-      pnl: '-$4.00',
-      pnlColor: 'text-red-400',
-      strategy: 'RSI Reversal',
-      status: 'Closed',
-    },
-    {
-      id: '10',
-      timestamp: '2024-01-14 13:30:18',
-      market: 'XRP > $2',
-      asset: 'XRP',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 100,
-      costPerShare: '38¢',
-      totalCost: '$38.00',
-      exitPrice: '44¢',
-      exitShares: 100,
-      exitTotal: '$44.00',
-      pnl: '+$6.00',
-      pnlColor: 'text-green-400',
-      strategy: 'Bollinger Squeeze',
-      status: 'Closed',
-    },
-    {
-      id: '11',
-      timestamp: '2024-01-14 12:15:42',
-      market: 'SOL > $200',
-      asset: 'SOL',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 175,
-      costPerShare: '38¢',
-      totalCost: '$66.50',
-      exitPrice: '41¢',
-      exitShares: 175,
-      exitTotal: '$71.75',
-      pnl: '+$5.25',
-      pnlColor: 'text-green-400',
-      strategy: 'RSI Reversal',
-      status: 'Closed',
-    },
-    {
-      id: '12',
-      timestamp: '2024-01-14 11:00:28',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 90,
-      costPerShare: '38¢',
-      totalCost: '$34.20',
-      exitPrice: '35¢',
-      exitShares: 90,
-      exitTotal: '$31.50',
-      pnl: '-$2.70',
-      pnlColor: 'text-red-400',
-      strategy: 'Volume Surge',
-      status: 'Closed',
-    },
-    {
-      id: '13',
-      timestamp: '2024-01-13 17:25:50',
-      market: 'ETH > $5k',
-      asset: 'ETH',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 140,
-      costPerShare: '35¢',
-      totalCost: '$49.00',
-      exitPrice: '39¢',
-      exitShares: 140,
-      exitTotal: '$54.60',
-      pnl: '+$5.60',
-      pnlColor: 'text-green-400',
-      strategy: 'RSI Reversal',
-      status: 'Closed',
-    },
-    {
-      id: '14',
-      timestamp: '2024-01-13 16:40:15',
-      market: 'SOL > $200',
-      asset: 'SOL',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 160,
-      costPerShare: '35¢',
-      totalCost: '$56.00',
-      exitPrice: '33¢',
-      exitShares: 160,
-      exitTotal: '$52.80',
-      pnl: '-$3.20',
-      pnlColor: 'text-red-400',
-      strategy: 'MACD Crossover',
-      status: 'Closed',
-    },
-    {
-      id: '15',
-      timestamp: '2024-01-13 15:55:22',
-      market: 'XRP > $2',
-      asset: 'XRP',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 95,
-      costPerShare: '42¢',
-      totalCost: '$39.90',
-      exitPrice: '46¢',
-      exitShares: 95,
-      exitTotal: '$43.70',
-      pnl: '+$3.80',
-      pnlColor: 'text-green-400',
-      strategy: 'Bollinger Squeeze',
-      status: 'Closed',
-    },
-    {
-      id: '16',
-      timestamp: '2024-01-13 14:20:08',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 110,
-      costPerShare: '42¢',
-      totalCost: '$46.20',
-      exitPrice: '40¢',
-      exitShares: 110,
-      exitTotal: '$44.00',
-      pnl: '-$2.20',
-      pnlColor: 'text-red-400',
-      strategy: 'Mean Reversion',
-      status: 'Closed',
-    },
-    {
-      id: '17',
-      timestamp: '2024-01-13 13:05:45',
-      market: 'ETH > $5k',
-      asset: 'ETH',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 130,
-      costPerShare: '40¢',
-      totalCost: '$52.00',
-      exitPrice: '45¢',
-      exitShares: 130,
-      exitTotal: '$58.50',
-      pnl: '+$6.50',
-      pnlColor: 'text-green-400',
-      strategy: 'Momentum Breakout',
-      status: 'Closed',
-    },
-    {
-      id: '18',
-      timestamp: '2024-01-13 12:30:19',
-      market: 'SOL > $200',
-      asset: 'SOL',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 85,
-      costPerShare: '40¢',
-      totalCost: '$34.00',
-      pnl: '+$4.25',
-      pnlColor: 'text-green-400',
-      strategy: 'RSI Reversal',
-      status: 'Open',
-    },
-    {
-      id: '19',
-      timestamp: '2024-01-12 18:15:30',
-      market: 'XRP > $2',
-      asset: 'XRP',
-      side: 'Sell No',
-      sideColor: 'text-red-400',
-      shares: 220,
-      costPerShare: '31¢',
-      totalCost: '$68.20',
-      exitPrice: '29¢',
-      exitShares: 220,
-      exitTotal: '$63.80',
-      pnl: '+$4.40',
-      pnlColor: 'text-green-400',
-      strategy: 'MACD Crossover',
-      status: 'Closed',
-    },
-    {
-      id: '20',
-      timestamp: '2024-01-12 17:00:12',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Sell No',
-      sideColor: 'text-red-400',
-      shares: 150,
-      costPerShare: '31¢',
-      totalCost: '$46.50',
-      exitPrice: '33¢',
-      exitShares: 150,
-      exitTotal: '$49.50',
-      pnl: '-$3.00',
-      pnlColor: 'text-red-400',
-      strategy: 'Bollinger Squeeze',
-      status: 'Closed',
-    },
-  ]
+  const formatTimestamp = (timestamp: string | number): string => {
+    const date = typeof timestamp === 'number' 
+      ? new Date(timestamp * 1000) 
+      : new Date(timestamp)
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
 
-  // Filter trades based on outcomesOnly toggle
-  const filteredTrades = useMemo(() => {
-    if (outcomesOnly) {
-      // Show only trades that have an outcome (Closed with Win/Loss, or Open/In Progress)
-      // This filters out intermediate buy/sell actions and shows only final outcomes
-      return allTrades.filter((trade) => trade.status === 'Closed' || trade.status === 'Open')
+  const formatPrice = (price: string | number): string => {
+    const priceNum = typeof price === 'string' ? parseFloat(price) : price
+    const cents = Math.round(priceNum * 100)
+    return `${cents}¢`
+  }
+
+  const transformTrade = (trade: PolymarketTrade): DisplayTrade => {
+    const price = parseFloat(trade.price)
+    const size = parseFloat(trade.size)
+    const totalCost = price * size
+
+    const isBuy = trade.side === 'BUY'
+    const isYes = trade.outcome?.toLowerCase() === 'yes'
+    
+    let sideDisplay: string
+    let sideColor: string
+
+    if (isBuy && isYes) {
+      sideDisplay = 'Buy Yes'
+      sideColor = 'text-green-400'
+    } else if (isBuy && !isYes) {
+      sideDisplay = 'Buy No'
+      sideColor = 'text-red-400'
+    } else if (!isBuy && isYes) {
+      sideDisplay = 'Sell Yes'
+      sideColor = 'text-red-400'
+    } else {
+      sideDisplay = 'Sell No'
+      sideColor = 'text-green-400'
     }
-    return allTrades
-  }, [outcomesOnly])
+
+    return {
+      id: trade.id,
+      timestamp: formatTimestamp(trade.match_time),
+      market: trade.market,
+      title: trade.title || 'Unknown Market',
+      side: sideDisplay,
+      sideColor,
+      shares: size,
+      price: price,
+      priceDisplay: formatPrice(price),
+      totalCost: `$${totalCost.toFixed(2)}`,
+      pnl: '-',
+      pnlValue: 0,
+      pnlColor: 'text-gray-400',
+      status: 'Open',
+      outcome: trade.outcome,
+      transactionHash: trade.transaction_hash,
+    }
+  }
+
+  const fetchTrades = useCallback(async (newOffset: number = 0) => {
+    if (!walletAddress) return
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const response = await fetch(
+        `/api/user/trades?address=${walletAddress}&limit=${limit}&offset=${newOffset}`
+      )
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch trades')
+      }
+
+      const data = await response.json()
+      const transformedTrades = (data.trades || []).map(transformTrade)
+
+      if (newOffset === 0) {
+        setTrades(transformedTrades)
+      } else {
+        setTrades((prev) => [...prev, ...transformedTrades])
+      }
+
+      setHasMore(data.trades?.length === limit)
+      setOffset(newOffset)
+    } catch (err) {
+      console.error('Error fetching trades:', err)
+      setError('Failed to load trade history. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }, [walletAddress, limit])
+
+  const fetchClosedPositions = useCallback(async () => {
+    if (!walletAddress) return
+
+    try {
+      const response = await fetch(
+        `/api/user/closed-positions?address=${walletAddress}&limit=50`
+      )
+
+      if (response.ok) {
+        const data = await response.json()
+        setClosedPositions(data.positions || [])
+      }
+    } catch (err) {
+      console.error('Error fetching closed positions:', err)
+    }
+  }, [walletAddress])
+
+  useEffect(() => {
+    if (isConnected && walletAddress) {
+      fetchTrades(0)
+      fetchClosedPositions()
+    } else {
+      setTrades([])
+      setClosedPositions([])
+      setLoading(false)
+    }
+  }, [isConnected, walletAddress, fetchTrades, fetchClosedPositions])
+
+  const handleLoadMore = () => {
+    fetchTrades(offset + limit)
+  }
+
+  const handleRefresh = () => {
+    setOffset(0)
+    fetchTrades(0)
+    fetchClosedPositions()
+  }
+
+  // Not connected state
+  if (!isConnected) {
+    return (
+      <div className="bg-black text-white min-h-screen">
+        <div className="px-4 sm:px-6 py-6 sm:py-8">
+          <h1 className="text-2xl sm:text-3xl font-bold mb-6">Trading History</h1>
+          <div className="py-16 text-center">
+            <h2 className="text-base font-medium text-gray-400 mb-1">Wallet Not Connected</h2>
+            <p className="text-sm text-gray-500">
+              Connect your wallet to view your trading history.
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="bg-black text-white min-h-screen">
       <div className="px-4 sm:px-6 py-6 sm:py-8">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold">Trading History</h1>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold">Trading History</h1>
+            <p className="text-sm text-gray-400 mt-1">
+              Your complete trading activity on Polymarket
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleRefresh}
+              disabled={loading}
+              className="px-4 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-400 hover:text-white hover:border-gray-700 transition-colors disabled:opacity-50"
+              aria-label="Refresh trades"
+            >
+              {loading ? (
+                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              )}
+            </button>
+            <Link
+              href={`/profile/${walletAddress}`}
+              className="px-4 py-2 bg-purple-primary hover:bg-purple-hover text-white rounded text-sm font-medium transition-colors"
+            >
+              View Profile
+            </Link>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-gray-800 mb-6">
           <button
-            onClick={() => setOutcomesOnly(!outcomesOnly)}
-            className={`px-4 py-2 rounded transition-colors text-sm font-medium ${
-              outcomesOnly
-                ? 'bg-purple-primary text-white'
-                : 'bg-gray-900 border border-gray-800 text-gray-400 hover:text-white hover:border-gray-700'
+            onClick={() => setActiveTab('trades')}
+            className={`px-4 py-3 text-sm font-semibold transition-colors relative ${
+              activeTab === 'trades' ? 'text-white' : 'text-gray-400 hover:text-white'
             }`}
           >
-            {outcomesOnly ? '✓ Outcomes Only' : 'Outcomes Only'}
+            All Trades ({trades.length})
+            {activeTab === 'trades' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-primary" />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('positions')}
+            className={`px-4 py-3 text-sm font-semibold transition-colors relative ${
+              activeTab === 'positions' ? 'text-white' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            Closed Positions ({closedPositions.length})
+            {activeTab === 'positions' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-primary" />
+            )}
           </button>
         </div>
 
-        {/* Description */}
-        <div className="mb-6">
-          <p className="text-sm text-gray-400">
-            {outcomesOnly
-              ? 'Showing only trade outcomes (Win/Lost/In Progress)'
-              : 'Showing all trades including buy and sell actions'}
-          </p>
-        </div>
+        {/* Error State */}
+        {error && (
+          <div className="bg-red-900/20 border border-red-800 rounded-lg p-4 mb-6">
+            <p className="text-red-400 text-sm">{error}</p>
+            <button
+              onClick={() => fetchTrades(0)}
+              className="text-red-400 hover:text-red-300 text-sm underline mt-2"
+            >
+              Try again
+            </button>
+          </div>
+        )}
 
-        {/* Trades Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-gray-400 border-b border-gray-800">
-              <tr>
-                <th className="text-left py-3 px-4 font-medium">Time</th>
-                <th className="text-left py-3 px-4 font-medium">Market</th>
-                <th className="text-left py-3 px-4 font-medium">Side</th>
-                <th className="text-left py-3 px-4 font-medium">Strategy</th>
-                <th className="text-right py-3 px-4 font-medium">Shares</th>
-                <th className="text-right py-3 px-4 font-medium">Entry Price</th>
-                <th className="text-right py-3 px-4 font-medium">Exit Price</th>
-                <th className="text-right py-3 px-4 font-medium">PnL</th>
-                <th className="text-right py-3 px-4 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredTrades.length > 0 ? (
-                filteredTrades.map((trade) => (
-                  <tr
-                    key={trade.id}
-                    className="border-b border-gray-800 hover:bg-gray-900/30"
-                  >
-                    <td className="py-3 px-4 text-gray-400">{trade.timestamp}</td>
-                    <td className="py-3 px-4 text-white">{trade.market}</td>
-                    <td className="py-3 px-4">
-                      <span className={trade.sideColor}>{trade.side}</span>
-                    </td>
-                    <td className="py-3 px-4 text-gray-400 text-xs">
-                      {trade.strategy}
-                    </td>
-                    <td className="py-3 px-4 text-right text-white">{trade.shares}</td>
-                    <td className="py-3 px-4 text-right text-white">
-                      {trade.costPerShare}
-                    </td>
-                    <td className="py-3 px-4 text-right text-gray-400">
-                      {trade.exitPrice || '-'}
-                    </td>
-                    <td className={`py-3 px-4 text-right ${trade.pnlColor}`}>
-                      {trade.pnl}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <span
-                        className={`text-xs px-2 py-1 rounded ${
-                          trade.status === 'Open'
-                            ? 'bg-green-900/30 text-green-400'
-                            : trade.pnlColor === 'text-green-400'
-                            ? 'bg-green-900/30 text-green-400'
-                            : 'bg-red-900/30 text-red-400'
-                        }`}
-                      >
-                        {trade.status === 'Open'
-                          ? 'In Progress'
-                          : trade.pnlColor === 'text-green-400'
-                          ? 'Win'
-                          : 'Lost'}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={9} className="py-8 px-4 text-center text-gray-500 text-sm">
-                    No trades found
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        {/* Trades Tab */}
+        {activeTab === 'trades' && (
+          <>
+            {loading && trades.length === 0 ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <svg className="w-12 h-12 animate-spin text-purple-primary mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <p className="text-gray-400">Loading your trades...</p>
+                </div>
+              </div>
+            ) : trades.length === 0 ? (
+              <div className="py-12 text-center">
+                <p className="text-sm text-gray-500">
+                  You haven&apos;t made any trades on Polymarket yet.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-gray-400 border-b border-gray-800">
+                      <tr>
+                        <th className="text-left py-3 px-4 font-medium">Time</th>
+                        <th className="text-left py-3 px-4 font-medium">Market</th>
+                        <th className="text-left py-3 px-4 font-medium">Side</th>
+                        <th className="text-right py-3 px-4 font-medium">Shares</th>
+                        <th className="text-right py-3 px-4 font-medium">Price</th>
+                        <th className="text-right py-3 px-4 font-medium">Total</th>
+                        <th className="text-right py-3 px-4 font-medium">Tx</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trades.map((trade) => (
+                        <tr
+                          key={trade.id}
+                          className="border-b border-gray-800 hover:bg-gray-900/30 transition-colors"
+                        >
+                          <td className="py-3 px-4 text-gray-400 whitespace-nowrap">{trade.timestamp}</td>
+                          <td className="py-3 px-4">
+                            <div className="max-w-xs">
+                              <div className="text-white font-medium truncate" title={trade.title}>
+                                {trade.title}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className={`font-medium ${trade.sideColor}`}>{trade.side}</span>
+                          </td>
+                          <td className="py-3 px-4 text-right text-white font-mono">
+                            {trade.shares.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-3 px-4 text-right text-white font-mono">
+                            {trade.priceDisplay}
+                          </td>
+                          <td className="py-3 px-4 text-right text-white font-mono">
+                            {trade.totalCost}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            {trade.transactionHash ? (
+                              <a
+                                href={`https://polygonscan.com/tx/${trade.transactionHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-purple-primary hover:text-purple-hover transition-colors"
+                                title="View on PolygonScan"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                              </a>
+                            ) : (
+                              <span className="text-gray-600">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Load More */}
+                {hasMore && (
+                  <div className="flex justify-center mt-6">
+                    <button
+                      onClick={handleLoadMore}
+                      disabled={loading}
+                      className="px-6 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-white hover:bg-gray-800 transition-colors disabled:opacity-50"
+                    >
+                      {loading ? 'Loading...' : 'Load More'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {/* Closed Positions Tab */}
+        {activeTab === 'positions' && (
+          <>
+            {closedPositions.length === 0 ? (
+              <div className="py-12 text-center">
+                <p className="text-sm text-gray-500">
+                  You don&apos;t have any closed positions yet.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-gray-400 border-b border-gray-800">
+                    <tr>
+                      <th className="text-left py-3 px-4 font-medium">Closed</th>
+                      <th className="text-left py-3 px-4 font-medium">Market</th>
+                      <th className="text-left py-3 px-4 font-medium">Outcome</th>
+                      <th className="text-right py-3 px-4 font-medium">Avg Price</th>
+                      <th className="text-right py-3 px-4 font-medium">Total Bought</th>
+                      <th className="text-right py-3 px-4 font-medium">Realized PnL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {closedPositions.map((position, index) => {
+                      const pnl = position.realizedPnl
+                      const pnlColor = pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                      const pnlDisplay = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`
+
+                      return (
+                        <tr
+                          key={`${position.conditionId}-${index}`}
+                          className="border-b border-gray-800 hover:bg-gray-900/30 transition-colors"
+                        >
+                          <td className="py-3 px-4 text-gray-400 whitespace-nowrap">
+                            {formatTimestamp(position.timestamp)}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="max-w-xs">
+                              <div className="text-white font-medium truncate" title={position.title}>
+                                {position.title}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className={position.outcome === 'Yes' ? 'text-green-400' : 'text-red-400'}>
+                              {position.outcome}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right text-white font-mono">
+                            {formatPrice(position.avgPrice)}
+                          </td>
+                          <td className="py-3 px-4 text-right text-white font-mono">
+                            ${position.totalBought.toFixed(2)}
+                          </td>
+                          <td className={`py-3 px-4 text-right font-mono font-semibold ${pnlColor}`}>
+                            {pnlDisplay}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Summary Stats */}
+        {(trades.length > 0 || closedPositions.length > 0) && (
+          <div className="mt-8 pt-6 border-t border-gray-800">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                <div className="text-xs text-gray-400 mb-1">Total Trades</div>
+                <div className="text-white font-bold text-2xl">{trades.length}</div>
+              </div>
+              <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                <div className="text-xs text-gray-400 mb-1">Closed Positions</div>
+                <div className="text-white font-bold text-2xl">{closedPositions.length}</div>
+              </div>
+              <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                <div className="text-xs text-gray-400 mb-1">Total Realized PnL</div>
+                <div className={`font-bold text-2xl ${
+                  closedPositions.reduce((sum, p) => sum + p.realizedPnl, 0) >= 0
+                    ? 'text-green-400'
+                    : 'text-red-400'
+                }`}>
+                  {closedPositions.reduce((sum, p) => sum + p.realizedPnl, 0) >= 0 ? '+' : ''}
+                  ${closedPositions.reduce((sum, p) => sum + p.realizedPnl, 0).toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                <div className="text-xs text-gray-400 mb-1">Avg Position Size</div>
+                <div className="text-white font-bold text-2xl">
+                  ${closedPositions.length > 0
+                    ? (closedPositions.reduce((sum, p) => sum + p.totalBought, 0) / closedPositions.length).toFixed(2)
+                    : '0.00'}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
 }
-

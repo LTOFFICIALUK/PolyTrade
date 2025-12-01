@@ -71,6 +71,17 @@ export default function PolymarketAuthModal({ isOpen, onClose, onSuccess }: Poly
 
       const credentials = await response.json()
       
+      console.log('[PolymarketAuth] Received credentials:', {
+        apiKey: credentials.apiKey?.substring(0, 10) + '...',
+        secretLength: credentials.secret?.length,
+        passphraseLength: credentials.passphrase?.length,
+        allFields: Object.keys(credentials),
+      })
+      
+      if (!credentials.apiKey || !credentials.secret || !credentials.passphrase) {
+        throw new Error(`Missing credentials: ${Object.keys(credentials).join(', ')}`)
+      }
+      
       // Store credentials
       setPolymarketCredentials({
         apiKey: credentials.apiKey,

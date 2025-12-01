@@ -14,6 +14,7 @@
     "ws:start": "cd ws-service && npm run start"
   },
   "dependencies": {
+    "@polymarket/clob-client": "^4.22.8",
     "@types/pg": "^8.15.6",
     "next": "^14.0.0",
     "pg": "^8.16.3",

@@ -1,25 +1,75 @@
 'use client'
 
-import { useState, useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import type { KeyboardEvent } from 'react'
+import { useWallet } from '@/contexts/WalletContext'
+import Link from 'next/link'
 
-interface Trade {
+interface PolymarketTrade {
+  id: string
+  market: string
+  asset_id: string
+  side: 'BUY' | 'SELL'
+  size: string
+  price: string
+  match_time: string
+  outcome: string
+  title: string
+  transaction_hash?: string
+}
+
+interface ClosedPosition {
+  conditionId: string
+  avgPrice: number
+  totalBought: number
+  realizedPnl: number
+  timestamp: number
+  title: string
+  outcome: string
+}
+
+interface DisplayTrade {
   id: string
   timestamp: string
   market: string
-  asset: string
-  side: 'Buy Yes' | 'Sell No' | 'Buy No' | 'Sell Yes'
+  title: string
+  side: string
   sideColor: string
   shares: number
+  price: number
   costPerShare: string
   totalCost: string
-  exitPrice?: string
-  exitShares?: number
-  exitTotal?: string
   pnl: string
+  pnlValue: number
   pnlColor: string
-  strategy: string
   status: 'Open' | 'Closed'
+}
+
+interface AnalyticsData {
+  totalTrades: number
+  winRate: number
+  totalPnL: number
+  avgTradeCost: number
+  avgCostPerShare: number
+  avgFrequency: {
+    perDay: number
+    perWeek: number
+  }
+  avgProfit: number
+  avgLoss: number
+  wlRatio: number
+  bestTrade: number
+  worstTrade: number
+  totalWins: number
+  totalLosses: number
+}
+
+interface PricePointStats {
+  price: number
+  totalTrades: number
+  wins: number
+  losses: number
+  winRate: number
 }
 
 // Custom Dropdown Component
@@ -116,10 +166,7 @@ const CustomDropdown = ({ value, onChange, options, placeholder, className = '',
 
       {isOpen && (
         <div className="absolute z-30 w-full mt-1 bg-black border border-gray-800 rounded shadow-lg max-h-60 overflow-auto">
-          <ul
-            role="listbox"
-            className="py-1"
-          >
+          <ul role="listbox" className="py-1">
             {options.map((option) => (
               <li
                 key={option.value}
@@ -155,415 +202,250 @@ const CustomDropdown = ({ value, onChange, options, placeholder, className = '',
   )
 }
 
-interface PricePointStats {
-  price: number
-  totalTrades: number
-  wins: number
-  losses: number
-  winRate: number
-}
-
 export default function AnalyticsPage() {
-  const [selectedStrategy, setSelectedStrategy] = useState<string>('All Strategies')
+  const { walletAddress, isConnected } = useWallet()
   const [activeTab, setActiveTab] = useState<'overview' | 'trades' | 'performance'>('overview')
   const [expandedTrade, setExpandedTrade] = useState<string | null>(null)
-  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null)
+  const [selectedTrade, setSelectedTrade] = useState<DisplayTrade | null>(null)
   const [hoveredPrice, setHoveredPrice] = useState<number | null>(null)
   const [selectedPricePoint, setSelectedPricePoint] = useState<number | null>(null)
+  const [timeRange, setTimeRange] = useState<string>('all')
+  
+  // Data state
+  const [trades, setTrades] = useState<DisplayTrade[]>([])
+  const [closedPositions, setClosedPositions] = useState<ClosedPosition[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const strategies = [
-    'All Strategies',
-    'Momentum Breakout',
-    'RSI Reversal',
-    'MACD Crossover',
-    'Bollinger Squeeze',
-    'Volume Surge',
-    'Mean Reversion',
+  const timeRanges = [
+    { value: 'all', label: 'All Time' },
+    { value: '7d', label: 'Last 7 Days' },
+    { value: '30d', label: 'Last 30 Days' },
+    { value: '90d', label: 'Last 90 Days' },
   ]
 
-  // Mock analytics data - averages over past 50 trades
-  const analyticsData = {
-    totalTrades: 247,
-    winRate: 68.4,
-    totalPnL: 1256.80,
-    avgTradeCost: 45.30,
-    avgCostPerShare: 0.38,
-    avgFrequency: {
-      perDay: 1.3,
-      perWeek: 3.5,
-    },
-    avgProfit: 12.45,
-    avgLoss: -6.20,
-    wlRatio: 2.01,
-    bestTrade: 89.50,
-    worstTrade: -23.40,
+  const formatTimestamp = (timestamp: string | number): string => {
+    const date = typeof timestamp === 'number' 
+      ? new Date(timestamp * 1000) 
+      : new Date(timestamp)
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
   }
 
-  // Mock trades data
-  const trades: Trade[] = [
-    {
-      id: '1',
-      timestamp: '2024-01-15 14:32:15',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 100,
-      costPerShare: '45¢',
-      totalCost: '$45.00',
-      exitPrice: '52¢',
-      exitShares: 100,
-      exitTotal: '$52.00',
-      pnl: '+$7.00',
-      pnlColor: 'text-green-400',
-      strategy: 'Momentum Breakout',
-      status: 'Closed',
-    },
-    {
-      id: '2',
-      timestamp: '2024-01-15 13:15:42',
-      market: 'ETH > $5k',
-      asset: 'ETH',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 150,
-      costPerShare: '38¢',
-      totalCost: '$57.00',
-      exitPrice: '42¢',
-      exitShares: 150,
-      exitTotal: '$63.00',
-      pnl: '+$6.00',
-      pnlColor: 'text-green-400',
-      strategy: 'RSI Reversal',
-      status: 'Closed',
-    },
-    {
-      id: '3',
-      timestamp: '2024-01-15 12:08:23',
-      market: 'SOL > $200',
-      asset: 'SOL',
-      side: 'Sell No',
-      sideColor: 'text-red-400',
-      shares: 200,
-      costPerShare: '31¢',
-      totalCost: '$62.00',
-      exitPrice: '28¢',
-      exitShares: 200,
-      exitTotal: '$56.00',
-      pnl: '+$6.00',
-      pnlColor: 'text-green-400',
-      strategy: 'MACD Crossover',
-      status: 'Closed',
-    },
-    {
-      id: '4',
-      timestamp: '2024-01-15 11:45:10',
-      market: 'XRP > $2',
-      asset: 'XRP',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 75,
-      costPerShare: '42¢',
-      totalCost: '$31.50',
-      exitPrice: '38¢',
-      exitShares: 75,
-      exitTotal: '$28.50',
-      pnl: '-$3.00',
-      pnlColor: 'text-red-400',
-      strategy: 'Bollinger Squeeze',
-      status: 'Closed',
-    },
-    {
-      id: '5',
-      timestamp: '2024-01-15 10:22:55',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 250,
-      costPerShare: '40¢',
-      totalCost: '$100.00',
-      pnl: '+$12.50',
-      pnlColor: 'text-green-400',
-      strategy: 'Momentum Breakout',
-      status: 'Open',
-    },
-    {
-      id: '6',
-      timestamp: '2024-01-15 09:15:30',
-      market: 'ETH > $5k',
-      asset: 'ETH',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 180,
-      costPerShare: '35¢',
-      totalCost: '$63.00',
-      exitPrice: '41¢',
-      exitShares: 180,
-      exitTotal: '$73.80',
-      pnl: '+$10.80',
-      pnlColor: 'text-green-400',
-      strategy: 'RSI Reversal',
-      status: 'Closed',
-    },
-    // Additional trades for 45¢ price point
-    {
-      id: '7',
-      timestamp: '2024-01-14 16:20:12',
-      market: 'SOL > $200',
-      asset: 'SOL',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 120,
-      costPerShare: '45¢',
-      totalCost: '$54.00',
-      exitPrice: '51¢',
-      exitShares: 120,
-      exitTotal: '$61.20',
-      pnl: '+$7.20',
-      pnlColor: 'text-green-400',
-      strategy: 'Momentum Breakout',
-      status: 'Closed',
-    },
-    {
-      id: '8',
-      timestamp: '2024-01-14 15:45:33',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 80,
-      costPerShare: '45¢',
-      totalCost: '$36.00',
-      exitPrice: '48¢',
-      exitShares: 80,
-      exitTotal: '$38.40',
-      pnl: '+$2.40',
-      pnlColor: 'text-green-400',
-      strategy: 'MACD Crossover',
-      status: 'Closed',
-    },
-    {
-      id: '9',
-      timestamp: '2024-01-14 14:10:05',
-      market: 'ETH > $5k',
-      asset: 'ETH',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 200,
-      costPerShare: '45¢',
-      totalCost: '$90.00',
-      exitPrice: '43¢',
-      exitShares: 200,
-      exitTotal: '$86.00',
-      pnl: '-$4.00',
-      pnlColor: 'text-red-400',
-      strategy: 'RSI Reversal',
-      status: 'Closed',
-    },
-    // Additional trades for 38¢ price point
-    {
-      id: '10',
-      timestamp: '2024-01-14 13:30:18',
-      market: 'XRP > $2',
-      asset: 'XRP',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 100,
-      costPerShare: '38¢',
-      totalCost: '$38.00',
-      exitPrice: '44¢',
-      exitShares: 100,
-      exitTotal: '$44.00',
-      pnl: '+$6.00',
-      pnlColor: 'text-green-400',
-      strategy: 'Bollinger Squeeze',
-      status: 'Closed',
-    },
-    {
-      id: '11',
-      timestamp: '2024-01-14 12:15:42',
-      market: 'SOL > $200',
-      asset: 'SOL',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 175,
-      costPerShare: '38¢',
-      totalCost: '$66.50',
-      exitPrice: '41¢',
-      exitShares: 175,
-      exitTotal: '$71.75',
-      pnl: '+$5.25',
-      pnlColor: 'text-green-400',
-      strategy: 'RSI Reversal',
-      status: 'Closed',
-    },
-    {
-      id: '12',
-      timestamp: '2024-01-14 11:00:28',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 90,
-      costPerShare: '38¢',
-      totalCost: '$34.20',
-      exitPrice: '35¢',
-      exitShares: 90,
-      exitTotal: '$31.50',
-      pnl: '-$2.70',
-      pnlColor: 'text-red-400',
-      strategy: 'Volume Surge',
-      status: 'Closed',
-    },
-    // Additional trades for 35¢ price point
-    {
-      id: '13',
-      timestamp: '2024-01-13 17:25:50',
-      market: 'ETH > $5k',
-      asset: 'ETH',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 140,
-      costPerShare: '35¢',
-      totalCost: '$49.00',
-      exitPrice: '39¢',
-      exitShares: 140,
-      exitTotal: '$54.60',
-      pnl: '+$5.60',
-      pnlColor: 'text-green-400',
-      strategy: 'RSI Reversal',
-      status: 'Closed',
-    },
-    {
-      id: '14',
-      timestamp: '2024-01-13 16:40:15',
-      market: 'SOL > $200',
-      asset: 'SOL',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 160,
-      costPerShare: '35¢',
-      totalCost: '$56.00',
-      exitPrice: '33¢',
-      exitShares: 160,
-      exitTotal: '$52.80',
-      pnl: '-$3.20',
-      pnlColor: 'text-red-400',
-      strategy: 'MACD Crossover',
-      status: 'Closed',
-    },
-    // Additional trades for 42¢ price point
-    {
-      id: '15',
-      timestamp: '2024-01-13 15:55:22',
-      market: 'XRP > $2',
-      asset: 'XRP',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 95,
-      costPerShare: '42¢',
-      totalCost: '$39.90',
-      exitPrice: '46¢',
-      exitShares: 95,
-      exitTotal: '$43.70',
-      pnl: '+$3.80',
-      pnlColor: 'text-green-400',
-      strategy: 'Bollinger Squeeze',
-      status: 'Closed',
-    },
-    {
-      id: '16',
-      timestamp: '2024-01-13 14:20:08',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 110,
-      costPerShare: '42¢',
-      totalCost: '$46.20',
-      exitPrice: '40¢',
-      exitShares: 110,
-      exitTotal: '$44.00',
-      pnl: '-$2.20',
-      pnlColor: 'text-red-400',
-      strategy: 'Mean Reversion',
-      status: 'Closed',
-    },
-    // Additional trades for 40¢ price point
-    {
-      id: '17',
-      timestamp: '2024-01-13 13:05:45',
-      market: 'ETH > $5k',
-      asset: 'ETH',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 130,
-      costPerShare: '40¢',
-      totalCost: '$52.00',
-      exitPrice: '45¢',
-      exitShares: 130,
-      exitTotal: '$58.50',
-      pnl: '+$6.50',
-      pnlColor: 'text-green-400',
-      strategy: 'Momentum Breakout',
-      status: 'Closed',
-    },
-    {
-      id: '18',
-      timestamp: '2024-01-13 12:30:19',
-      market: 'SOL > $200',
-      asset: 'SOL',
-      side: 'Buy Yes',
-      sideColor: 'text-green-400',
-      shares: 85,
-      costPerShare: '40¢',
-      totalCost: '$34.00',
-      pnl: '+$4.25',
-      pnlColor: 'text-green-400',
-      strategy: 'RSI Reversal',
-      status: 'Open',
-    },
-    // Additional trades for 31¢ price point
-    {
-      id: '19',
-      timestamp: '2024-01-12 18:15:30',
-      market: 'XRP > $2',
-      asset: 'XRP',
-      side: 'Sell No',
-      sideColor: 'text-red-400',
-      shares: 220,
-      costPerShare: '31¢',
-      totalCost: '$68.20',
-      exitPrice: '29¢',
-      exitShares: 220,
-      exitTotal: '$63.80',
-      pnl: '+$4.40',
-      pnlColor: 'text-green-400',
-      strategy: 'MACD Crossover',
-      status: 'Closed',
-    },
-    {
-      id: '20',
-      timestamp: '2024-01-12 17:00:12',
-      market: 'BTC > $100k',
-      asset: 'BTC',
-      side: 'Sell No',
-      sideColor: 'text-red-400',
-      shares: 150,
-      costPerShare: '31¢',
-      totalCost: '$46.50',
-      exitPrice: '33¢',
-      exitShares: 150,
-      exitTotal: '$49.50',
-      pnl: '-$3.00',
-      pnlColor: 'text-red-400',
-      strategy: 'Bollinger Squeeze',
-      status: 'Closed',
-    },
-  ]
+  const formatPrice = (price: string | number): string => {
+    const priceNum = typeof price === 'string' ? parseFloat(price) : price
+    const cents = Math.round(priceNum * 100)
+    return `${cents}¢`
+  }
 
-  const handleTradeClick = (trade: Trade) => {
+  const transformTrade = useCallback((trade: PolymarketTrade): DisplayTrade => {
+    const price = parseFloat(trade.price)
+    const size = parseFloat(trade.size)
+    const totalCost = price * size
+
+    const isBuy = trade.side === 'BUY'
+    const isYes = trade.outcome?.toLowerCase() === 'yes'
+    
+    let sideDisplay: string
+    let sideColor: string
+
+    if (isBuy && isYes) {
+      sideDisplay = 'Buy Yes'
+      sideColor = 'text-green-400'
+    } else if (isBuy && !isYes) {
+      sideDisplay = 'Buy No'
+      sideColor = 'text-red-400'
+    } else if (!isBuy && isYes) {
+      sideDisplay = 'Sell Yes'
+      sideColor = 'text-red-400'
+    } else {
+      sideDisplay = 'Sell No'
+      sideColor = 'text-green-400'
+    }
+
+    return {
+      id: trade.id,
+      timestamp: formatTimestamp(trade.match_time),
+      market: trade.market,
+      title: trade.title || 'Unknown Market',
+      side: sideDisplay,
+      sideColor,
+      shares: size,
+      price: price,
+      costPerShare: formatPrice(price),
+      totalCost: `$${totalCost.toFixed(2)}`,
+      pnl: '-',
+      pnlValue: 0,
+      pnlColor: 'text-gray-400',
+      status: 'Open',
+    }
+  }, [])
+
+  const fetchData = useCallback(async () => {
+    if (!walletAddress) return
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      // Fetch trades and closed positions in parallel
+      const [tradesRes, closedRes] = await Promise.all([
+        fetch(`/api/user/trades?address=${walletAddress}&limit=500`),
+        fetch(`/api/user/closed-positions?address=${walletAddress}&limit=100`),
+      ])
+
+      if (tradesRes.ok) {
+        const tradesData = await tradesRes.json()
+        const transformedTrades = (tradesData.trades || []).map(transformTrade)
+        setTrades(transformedTrades)
+      }
+
+      if (closedRes.ok) {
+        const closedData = await closedRes.json()
+        setClosedPositions(closedData.positions || [])
+      }
+    } catch (err) {
+      console.error('Error fetching analytics data:', err)
+      setError('Failed to load analytics data. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }, [walletAddress, transformTrade])
+
+  useEffect(() => {
+    if (isConnected && walletAddress) {
+      fetchData()
+    } else {
+      setTrades([])
+      setClosedPositions([])
+      setLoading(false)
+    }
+  }, [isConnected, walletAddress, fetchData])
+
+  // Calculate analytics from real data
+  const analyticsData = useMemo((): AnalyticsData => {
+    // Filter closed positions for winners and losers
+    const wins = closedPositions.filter((p) => p.realizedPnl > 0)
+    const losses = closedPositions.filter((p) => p.realizedPnl < 0)
+    
+    const totalTrades = trades.length
+    const totalClosedPositions = closedPositions.length
+    const winRate = totalClosedPositions > 0 
+      ? (wins.length / totalClosedPositions) * 100 
+      : 0
+    
+    const totalPnL = closedPositions.reduce((sum, p) => sum + p.realizedPnl, 0)
+    
+    // Calculate average trade cost from trades
+    const tradeCosts = trades.map((t) => {
+      const cost = parseFloat(t.totalCost.replace('$', ''))
+      return isNaN(cost) ? 0 : cost
+    })
+    const avgTradeCost = tradeCosts.length > 0 
+      ? tradeCosts.reduce((a, b) => a + b, 0) / tradeCosts.length 
+      : 0
+
+    // Average price per share
+    const avgCostPerShare = trades.length > 0
+      ? trades.reduce((sum, t) => sum + t.price, 0) / trades.length
+      : 0
+
+    // Calculate trading frequency
+    const timestamps = trades.map((t) => new Date(t.timestamp).getTime())
+    let perDay = 0
+    let perWeek = 0
+    
+    if (timestamps.length > 1) {
+      const minTime = Math.min(...timestamps)
+      const maxTime = Math.max(...timestamps)
+      const daysDiff = Math.max(1, (maxTime - minTime) / (1000 * 60 * 60 * 24))
+      perDay = totalTrades / daysDiff
+      perWeek = perDay * 7
+    }
+
+    // Average profit/loss from closed positions
+    const avgProfit = wins.length > 0
+      ? wins.reduce((sum, p) => sum + p.realizedPnl, 0) / wins.length
+      : 0
+    
+    const avgLoss = losses.length > 0
+      ? losses.reduce((sum, p) => sum + p.realizedPnl, 0) / losses.length
+      : 0
+
+    // W/L Ratio
+    const wlRatio = losses.length > 0 && avgLoss !== 0
+      ? Math.abs(avgProfit / avgLoss)
+      : avgProfit > 0 ? Infinity : 0
+
+    // Best/worst trades
+    const pnlValues = closedPositions.map((p) => p.realizedPnl)
+    const bestTrade = pnlValues.length > 0 ? Math.max(...pnlValues) : 0
+    const worstTrade = pnlValues.length > 0 ? Math.min(...pnlValues) : 0
+
+    return {
+      totalTrades,
+      winRate: Math.round(winRate * 10) / 10,
+      totalPnL: Math.round(totalPnL * 100) / 100,
+      avgTradeCost: Math.round(avgTradeCost * 100) / 100,
+      avgCostPerShare: Math.round(avgCostPerShare * 100) / 100,
+      avgFrequency: {
+        perDay: Math.round(perDay * 10) / 10,
+        perWeek: Math.round(perWeek * 10) / 10,
+      },
+      avgProfit: Math.round(avgProfit * 100) / 100,
+      avgLoss: Math.round(avgLoss * 100) / 100,
+      wlRatio: Math.round(wlRatio * 100) / 100,
+      bestTrade: Math.round(bestTrade * 100) / 100,
+      worstTrade: Math.round(worstTrade * 100) / 100,
+      totalWins: wins.length,
+      totalLosses: losses.length,
+    }
+  }, [trades, closedPositions])
+
+  // Calculate win rate by price point
+  const pricePointStats = useMemo(() => {
+    const stats: Record<number, { total: number; wins: number; losses: number }> = {}
+
+    // Initialize all price points
+    for (let i = 1; i <= 99; i++) {
+      stats[i] = { total: 0, wins: 0, losses: 0 }
+    }
+
+    // Use closed positions which have PnL data
+    closedPositions.forEach((position) => {
+      const price = Math.round(position.avgPrice * 100)
+      if (price >= 1 && price <= 99) {
+        stats[price].total++
+        if (position.realizedPnl > 0) {
+          stats[price].wins++
+        } else if (position.realizedPnl < 0) {
+          stats[price].losses++
+        }
+      }
+    })
+
+    return Object.keys(stats)
+      .map((price) => {
+        const priceNum = parseInt(price)
+        const stat = stats[priceNum]
+        const winRate = stat.total > 0 ? (stat.wins / stat.total) * 100 : 0
+        return {
+          price: priceNum,
+          totalTrades: stat.total,
+          wins: stat.wins,
+          losses: stat.losses,
+          winRate: winRate,
+        }
+      })
+      .sort((a, b) => a.price - b.price)
+  }, [closedPositions])
+
+  const handleTradeClick = (trade: DisplayTrade) => {
     if (expandedTrade === trade.id) {
       setExpandedTrade(null)
       setSelectedTrade(null)
@@ -586,107 +468,11 @@ export default function AnalyticsPage() {
     setSelectedPricePoint(null)
   }
 
-  // Get trades for selected price point
-  const getTradesForPricePoint = (price: number): Trade[] => {
-    return trades.filter((trade) => {
-      const priceMatch = trade.costPerShare.match(/(\d+)¢/)
-      if (priceMatch) {
-        return parseInt(priceMatch[1]) === price
-      }
-      return false
-    })
-  }
-
-  // Get strategies that use this price point
-  const getStrategiesForPricePoint = (price: number): string[] => {
-    const priceTrades = getTradesForPricePoint(price)
-    const uniqueStrategies = new Set(priceTrades.map((trade) => trade.strategy))
-    return Array.from(uniqueStrategies)
-  }
-
-  // Deterministic pseudo-random function using price as seed
-  const seededRandom = (seed: number) => {
-    const x = Math.sin(seed) * 10000
-    return x - Math.floor(x)
-  }
-
-  // Calculate win rate statistics for each price point (1c-99c)
-  // Memoized to prevent recalculation on every render
-  const pricePointStats = useMemo(() => {
-    const stats: Record<number, { total: number; wins: number; losses: number }> = {}
-
-    // Initialize all price points
-    for (let i = 1; i <= 99; i++) {
-      stats[i] = { total: 0, wins: 0, losses: 0 }
-    }
-
-    // Process trades to calculate stats
-    trades.forEach((trade) => {
-      // Extract price from costPerShare (e.g., "45¢" -> 45)
-      const priceMatch = trade.costPerShare.match(/(\d+)¢/)
-      if (priceMatch) {
-        const price = parseInt(priceMatch[1])
-        if (price >= 1 && price <= 99) {
-          stats[price].total++
-          // Determine if it's a win or loss based on PnL
-          const pnlMatch = trade.pnl.match(/[+-]?\$?([\d.]+)/)
-          if (pnlMatch) {
-            const pnl = parseFloat(pnlMatch[1])
-            if (pnl > 0) {
-              stats[price].wins++
-            } else if (pnl < 0) {
-              stats[price].losses++
-            }
-          }
-        }
-      }
-    })
-
-    // Generate deterministic mock data for price points with no trades (for visualization)
-    // Uses price as seed so same price always gets same data
-    for (let i = 1; i <= 99; i++) {
-      if (stats[i].total === 0) {
-        // Use deterministic random based on price
-        const rand1 = seededRandom(i)
-        const rand2 = seededRandom(i * 2)
-        const rand3 = seededRandom(i * 3)
-        
-        // Add some mock data for better visualization (30% chance, deterministic)
-        const mockTrades = rand1 < 0.3 ? Math.floor(rand2 * 10) : 0
-        if (mockTrades > 0) {
-          stats[i].total = mockTrades
-          // Higher win rates for mid-range prices (30-70c)
-          const baseWinRate = i >= 30 && i <= 70 ? 0.65 : 0.55
-          const winRateVariation = (rand3 - 0.5) * 0.2
-          stats[i].wins = Math.floor(mockTrades * (baseWinRate + winRateVariation))
-          stats[i].losses = mockTrades - stats[i].wins
-        }
-      }
-    }
-
-    // Convert to array and calculate win rates
-    return Object.keys(stats)
-      .map((price) => {
-        const priceNum = parseInt(price)
-        const stat = stats[priceNum]
-        const winRate = stat.total > 0 ? (stat.wins / stat.total) * 100 : 0
-        return {
-          price: priceNum,
-          totalTrades: stat.total,
-          wins: stat.wins,
-          losses: stat.losses,
-          winRate: winRate,
-        }
-      })
-      .sort((a, b) => a.price - b.price)
-  }, [trades])
-
   // Get color for win rate (heatmap style)
   const getWinRateColor = (winRate: number, totalTrades: number) => {
     if (totalTrades === 0) {
       return 'bg-gray-900 border-gray-800'
     }
-    // Green gradient for high win rates, red for low
     if (winRate >= 70) {
       return 'bg-green-600/80 border-green-500'
     } else if (winRate >= 60) {
@@ -700,48 +486,103 @@ export default function AnalyticsPage() {
     }
   }
 
-  // Get text color based on background
   const getTextColor = (winRate: number, totalTrades: number) => {
     if (totalTrades === 0) {
       return 'text-gray-600'
     }
-    if (winRate >= 50) {
-      return 'text-white'
-    } else {
-      return 'text-white'
-    }
+    return 'text-white'
+  }
+
+  // Get trades for selected price point
+  const getTradesForPricePoint = (price: number): ClosedPosition[] => {
+    return closedPositions.filter((position) => {
+      const posPrice = Math.round(position.avgPrice * 100)
+      return posPrice === price
+    })
+  }
+
+  // Not connected state
+  if (!isConnected) {
+    return (
+      <div className="bg-black text-white min-h-screen">
+        <div className="px-4 sm:px-6 py-6 sm:py-8">
+          <h1 className="text-2xl sm:text-3xl font-bold mb-6">Analytics</h1>
+          <div className="py-16 text-center">
+            <h2 className="text-base font-medium text-gray-400 mb-1">Wallet Not Connected</h2>
+            <p className="text-sm text-gray-500">
+              Connect your wallet to view your trading analytics.
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="bg-black text-white min-h-screen">
+        <div className="px-4 sm:px-6 py-6 sm:py-8">
+          <h1 className="text-2xl sm:text-3xl font-bold mb-6">Analytics</h1>
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <svg className="w-12 h-12 animate-spin text-purple-primary mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              <p className="text-gray-400">Loading your analytics...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="bg-black text-white min-h-screen">
       <div className="px-4 sm:px-6 py-6 sm:py-8">
-        {/* Header with Strategy Selector */}
+        {/* Header */}
         <div className="mb-6 sm:mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-            <h1 className="text-2xl sm:text-3xl font-bold">Analytics</h1>
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold">Analytics</h1>
+              <p className="text-sm text-gray-400 mt-1">
+                Your trading performance insights
+              </p>
+            </div>
             <div className="flex items-center gap-3">
-              <label className="text-sm text-gray-400">Strategy:</label>
               <CustomDropdown
-                value={selectedStrategy}
-                onChange={(value) => setSelectedStrategy(value)}
-                options={strategies.map((strategy) => ({
-                  value: strategy,
-                  label: strategy,
-                }))}
-                placeholder="Select strategy"
-                className="w-48"
+                value={timeRange}
+                onChange={(value) => setTimeRange(value)}
+                options={timeRanges}
+                placeholder="Time Range"
+                className="w-40"
               />
+              <button
+                onClick={fetchData}
+                className="px-4 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-400 hover:text-white hover:border-gray-700 transition-colors"
+                aria-label="Refresh data"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
             </div>
           </div>
+
+          {/* Error State */}
+          {error && (
+            <div className="bg-red-900/20 border border-red-800 rounded-lg p-4 mb-6">
+              <p className="text-red-400 text-sm">{error}</p>
+            </div>
+          )}
 
           {/* Tabs */}
           <div className="flex border-b border-gray-800">
             <button
               onClick={() => setActiveTab('overview')}
               className={`px-4 py-3 text-sm font-semibold transition-colors relative ${
-                activeTab === 'overview'
-                  ? 'text-white'
-                  : 'text-gray-400 hover:text-white'
+                activeTab === 'overview' ? 'text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               Overview
@@ -752,9 +593,7 @@ export default function AnalyticsPage() {
             <button
               onClick={() => setActiveTab('trades')}
               className={`px-4 py-3 text-sm font-semibold transition-colors relative ${
-                activeTab === 'trades'
-                  ? 'text-white'
-                  : 'text-gray-400 hover:text-white'
+                activeTab === 'trades' ? 'text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               Trade Details
@@ -765,9 +604,7 @@ export default function AnalyticsPage() {
             <button
               onClick={() => setActiveTab('performance')}
               className={`px-4 py-3 text-sm font-semibold transition-colors relative ${
-                activeTab === 'performance'
-                  ? 'text-white'
-                  : 'text-gray-400 hover:text-white'
+                activeTab === 'performance' ? 'text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               Performance
@@ -778,488 +615,381 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
-        {/* Tab Content */}
+        {/* Overview Tab */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* Key Metrics Grid */}
-            <div>
-              <h2 className="text-lg font-semibold mb-4 text-gray-300">
-                Averages over past 50 trades
-              </h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">Total Trades</div>
-                  <div className="text-white font-bold text-2xl">{analyticsData.totalTrades}</div>
-                  <div className="text-xs text-gray-500 mt-1">All-time</div>
-                </div>
-
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">Win Rate</div>
-                  <div className="text-green-400 font-bold text-2xl">
-                    {analyticsData.winRate}%
-                  </div>
-                </div>
-
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">Total PnL</div>
-                  <div className="text-green-400 font-bold text-2xl">
-                    +${analyticsData.totalPnL.toFixed(2)}
-                  </div>
-                </div>
-
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">Avg Trade Cost</div>
-                  <div className="text-white font-bold text-2xl">
-                    ${analyticsData.avgTradeCost.toFixed(2)}
-                  </div>
-                </div>
-
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">Avg Cost/Share</div>
-                  <div className="text-white font-bold text-2xl">
-                    {analyticsData.avgCostPerShare.toFixed(2)}¢
-                  </div>
-                </div>
-
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">Avg Frequency</div>
-                  <div className="text-white font-bold text-xl">
-                    {analyticsData.avgFrequency.perDay}x/day
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {analyticsData.avgFrequency.perWeek}x/week
-                  </div>
-                </div>
-
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">Avg Profit</div>
-                  <div className="text-green-400 font-bold text-2xl">
-                    +${analyticsData.avgProfit.toFixed(2)}
-                  </div>
-                </div>
-
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">Avg Loss</div>
-                  <div className="text-red-400 font-bold text-2xl">
-                    ${analyticsData.avgLoss.toFixed(2)}
-                  </div>
-                </div>
-
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">W/L Ratio</div>
-                  <div className="text-white font-bold text-2xl">
-                    {analyticsData.wlRatio.toFixed(2)}
-                  </div>
-                </div>
-
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">Best Trade</div>
-                  <div className="text-green-400 font-bold text-2xl">
-                    +${analyticsData.bestTrade.toFixed(2)}
-                  </div>
-                </div>
-
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                  <div className="text-xs text-gray-400 mb-1">Worst Trade</div>
-                  <div className="text-red-400 font-bold text-2xl">
-                    ${analyticsData.worstTrade.toFixed(2)}
-                  </div>
-                </div>
+            {trades.length === 0 && closedPositions.length === 0 ? (
+              <div className="py-16 text-center">
+                <h2 className="text-base font-medium text-gray-400 mb-1">No Trading Data</h2>
+                <p className="text-sm text-gray-500 mb-6">
+                  Start trading on Polymarket to see your analytics here.
+                </p>
+                <Link
+                  href="/terminal"
+                  className="inline-block px-6 py-2.5 bg-purple-primary hover:bg-purple-hover text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  Go to Terminal
+                </Link>
               </div>
-            </div>
+            ) : (
+              <>
+                <div>
+                  <h2 className="text-lg font-semibold mb-4 text-gray-300">
+                    Performance Summary
+                  </h2>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Total Trades</div>
+                      <div className="text-white font-bold text-2xl">{analyticsData.totalTrades}</div>
+                      <div className="text-xs text-gray-500 mt-1">All-time</div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Win Rate</div>
+                      <div className={`font-bold text-2xl ${analyticsData.winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+                        {analyticsData.winRate}%
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {analyticsData.totalWins}W / {analyticsData.totalLosses}L
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Total PnL</div>
+                      <div className={`font-bold text-2xl ${analyticsData.totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {analyticsData.totalPnL >= 0 ? '+' : ''}${analyticsData.totalPnL.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Avg Trade Cost</div>
+                      <div className="text-white font-bold text-2xl">
+                        ${analyticsData.avgTradeCost.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Avg Price/Share</div>
+                      <div className="text-white font-bold text-2xl">
+                        {Math.round(analyticsData.avgCostPerShare * 100)}¢
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Trading Frequency</div>
+                      <div className="text-white font-bold text-xl">
+                        {analyticsData.avgFrequency.perDay}x/day
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {analyticsData.avgFrequency.perWeek}x/week
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Avg Profit</div>
+                      <div className="text-green-400 font-bold text-2xl">
+                        +${analyticsData.avgProfit.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Avg Loss</div>
+                      <div className="text-red-400 font-bold text-2xl">
+                        ${analyticsData.avgLoss.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">W/L Ratio</div>
+                      <div className="text-white font-bold text-2xl">
+                        {analyticsData.wlRatio === Infinity ? '∞' : analyticsData.wlRatio.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Best Trade</div>
+                      <div className="text-green-400 font-bold text-2xl">
+                        +${analyticsData.bestTrade.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Worst Trade</div>
+                      <div className="text-red-400 font-bold text-2xl">
+                        ${analyticsData.worstTrade.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                      <div className="text-xs text-gray-400 mb-1">Closed Positions</div>
+                      <div className="text-white font-bold text-2xl">
+                        {closedPositions.length}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 
+        {/* Trades Tab */}
         {activeTab === 'trades' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-300">Trade History</h2>
+              <h2 className="text-lg font-semibold text-gray-300">Recent Trades</h2>
               <div className="text-sm text-gray-400">
-                Click any trade for detailed analysis
+                {trades.length} trades loaded
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-gray-400 border-b border-gray-800">
-                  <tr>
-                    <th className="text-left py-3 px-4 font-medium">Time</th>
-                    <th className="text-left py-3 px-4 font-medium">Market</th>
-                    <th className="text-left py-3 px-4 font-medium">Side</th>
-                    <th className="text-left py-3 px-4 font-medium">Strategy</th>
-                    <th className="text-right py-3 px-4 font-medium">Shares</th>
-                    <th className="text-right py-3 px-4 font-medium">Cost/Share</th>
-                    <th className="text-right py-3 px-4 font-medium">Total Cost</th>
-                    <th className="text-right py-3 px-4 font-medium">Exit Price</th>
-                    <th className="text-right py-3 px-4 font-medium">PnL</th>
-                    <th className="text-right py-3 px-4 font-medium">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trades.map((trade) => (
-                    <>
+            {trades.length === 0 ? (
+              <div className="py-12 text-center">
+                <p className="text-sm text-gray-500">No trades found</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-gray-400 border-b border-gray-800">
+                    <tr>
+                      <th className="text-left py-3 px-4 font-medium">Time</th>
+                      <th className="text-left py-3 px-4 font-medium">Market</th>
+                      <th className="text-left py-3 px-4 font-medium">Side</th>
+                      <th className="text-right py-3 px-4 font-medium">Shares</th>
+                      <th className="text-right py-3 px-4 font-medium">Price</th>
+                      <th className="text-right py-3 px-4 font-medium">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trades.slice(0, 50).map((trade) => (
                       <tr
                         key={trade.id}
                         onClick={() => handleTradeClick(trade)}
-                        className="border-b border-gray-800 hover:bg-gray-900/30 cursor-pointer"
+                        className="border-b border-gray-800 hover:bg-gray-900/30 cursor-pointer transition-colors"
                       >
-                        <td className="py-3 px-4 text-gray-400">{trade.timestamp}</td>
-                        <td className="py-3 px-4 text-white">{trade.market}</td>
+                        <td className="py-3 px-4 text-gray-400 whitespace-nowrap">{trade.timestamp}</td>
+                        <td className="py-3 px-4">
+                          <div className="max-w-xs truncate text-white" title={trade.title}>
+                            {trade.title}
+                          </div>
+                        </td>
                         <td className="py-3 px-4">
                           <span className={trade.sideColor}>{trade.side}</span>
                         </td>
-                        <td className="py-3 px-4 text-gray-400 text-xs">
-                          {trade.strategy}
+                        <td className="py-3 px-4 text-right text-white font-mono">
+                          {trade.shares.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                         </td>
-                        <td className="py-3 px-4 text-right text-white">{trade.shares}</td>
-                        <td className="py-3 px-4 text-right text-white">
+                        <td className="py-3 px-4 text-right text-white font-mono">
                           {trade.costPerShare}
                         </td>
-                        <td className="py-3 px-4 text-right text-white">
+                        <td className="py-3 px-4 text-right text-white font-mono">
                           {trade.totalCost}
                         </td>
-                        <td className="py-3 px-4 text-right text-gray-400">
-                          {trade.exitPrice || '-'}
-                        </td>
-                        <td className={`py-3 px-4 text-right ${trade.pnlColor}`}>
-                          {trade.pnl}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <span
-                            className={`text-xs px-2 py-1 rounded ${
-                              trade.status === 'Open'
-                                ? 'bg-green-900/30 text-green-400'
-                                : 'bg-gray-800 text-gray-400'
-                            }`}
-                          >
-                            {trade.status}
-                          </span>
-                        </td>
                       </tr>
-                      {expandedTrade === trade.id && selectedTrade && (
-                        <tr className="bg-gray-900/50">
-                          <td colSpan={10} className="px-4 py-6">
-                            <div className="space-y-4">
-                              <div className="flex items-center justify-between mb-4">
-                                <h3 className="text-lg font-semibold text-white">
-                                  Trade Details
-                                </h3>
-                                <button
-                                  onClick={closeTradeDetail}
-                                  className="text-gray-400 hover:text-white transition-colors"
-                                >
-                                  <svg
-                                    className="w-5 h-5"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2}
-                                      d="M6 18L18 6M6 6l12 12"
-                                    />
-                                  </svg>
-                                </button>
-                              </div>
-
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                                <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                                  <div className="text-xs text-gray-400 mb-1">Entry Details</div>
-                                  <div className="text-white text-sm">
-                                    <div>Shares: {selectedTrade.shares}</div>
-                                    <div>Cost/Share: {selectedTrade.costPerShare}</div>
-                                    <div>Total: {selectedTrade.totalCost}</div>
-                                  </div>
-                                </div>
-
-                                {selectedTrade.exitPrice && (
-                                  <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                                    <div className="text-xs text-gray-400 mb-1">Exit Details</div>
-                                    <div className="text-white text-sm">
-                                      <div>Shares: {selectedTrade.exitShares}</div>
-                                      <div>Exit Price: {selectedTrade.exitPrice}</div>
-                                      <div>Total: {selectedTrade.exitTotal}</div>
-                                    </div>
-                                  </div>
-                                )}
-
-                                <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                                  <div className="text-xs text-gray-400 mb-1">Trade Info</div>
-                                  <div className="text-white text-sm">
-                                    <div>Market: {selectedTrade.market}</div>
-                                    <div>Asset: {selectedTrade.asset}</div>
-                                    <div>Strategy: {selectedTrade.strategy}</div>
-                                  </div>
-                                </div>
-
-                                <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                                  <div className="text-xs text-gray-400 mb-1">Performance</div>
-                                  <div className="text-sm">
-                                    <div className={selectedTrade.pnlColor}>
-                                      PnL: {selectedTrade.pnl}
-                                    </div>
-                                    <div className="text-gray-400 mt-1">
-                                      Status: {selectedTrade.status}
-                                    </div>
-                                    <div className="text-gray-400 text-xs mt-1">
-                                      {selectedTrade.timestamp}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Additional Analysis Section */}
-                              <div className="mt-4 pt-4 border-t border-gray-800">
-                                <h4 className="text-sm font-semibold text-gray-300 mb-3">
-                                  Trade Analysis
-                                </h4>
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                  <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                                    <div className="text-xs text-gray-400 mb-1">
-                                      Cost Breakdown
-                                    </div>
-                                    <div className="text-white text-sm space-y-1">
-                                      <div>
-                                        Entry: {selectedTrade.shares} shares ×{' '}
-                                        {selectedTrade.costPerShare} = {selectedTrade.totalCost}
-                                      </div>
-                                      {selectedTrade.exitPrice && (
-                                        <div>
-                                          Exit: {selectedTrade.exitShares} shares ×{' '}
-                                          {selectedTrade.exitPrice} = {selectedTrade.exitTotal}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                                    <div className="text-xs text-gray-400 mb-1">
-                                      Price Movement
-                                    </div>
-                                    <div className="text-white text-sm space-y-1">
-                                      {selectedTrade.exitPrice ? (
-                                        <>
-                                          <div>
-                                            Entry: {selectedTrade.costPerShare}
-                                          </div>
-                                          <div>Exit: {selectedTrade.exitPrice}</div>
-                                          <div className={selectedTrade.pnlColor}>
-                                            {selectedTrade.pnl}
-                                          </div>
-                                        </>
-                                      ) : (
-                                        <div className="text-gray-500">Position Open</div>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                                    <div className="text-xs text-gray-400 mb-1">
-                                      Strategy Performance
-                                    </div>
-                                    <div className="text-white text-sm space-y-1">
-                                      <div>Strategy: {selectedTrade.strategy}</div>
-                                      <div className={selectedTrade.pnlColor}>
-                                        Result: {selectedTrade.pnl}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
+        {/* Performance Tab */}
         {activeTab === 'performance' && (
           <div className="space-y-6">
             <div className="mb-6">
               <h2 className="text-lg font-semibold text-gray-300 mb-2">
-                Win Rate by Price Per Share Paid
+                Win Rate by Entry Price
               </h2>
               <p className="text-sm text-gray-400 mb-2">
-                Each cell shows the win rate for trades where you paid that specific price per share
-                (1¢ - 99¢). Color indicates win rate performance.
+                Each cell shows your win rate for positions entered at that price point (1¢ - 99¢).
               </p>
-              <div className="text-xs text-gray-500 bg-gray-900/50 rounded p-2 inline-block">
-                <strong>X-axis (top):</strong> Ones digit of price (0-9) |{' '}
-                <strong>Y-axis (left):</strong> Tens digit of price (0-9) |{' '}
-                <strong>Cell color:</strong> Win rate |{' '}
-                <strong>Cell value:</strong> Win rate % and total trades
-              </div>
-            </div>
+              {closedPositions.length === 0 ? (
+                <div className="py-12 text-center">
+                  <p className="text-sm text-gray-500">
+                    No closed positions to analyze. Complete some trades to see your performance by price point.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* Legend */}
+                  <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800 mb-4">
+                    <div className="flex flex-wrap items-center gap-4 text-sm">
+                      <span className="text-gray-400">Win Rate:</span>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 bg-red-500/60 border border-red-400 rounded"></div>
+                        <span className="text-gray-300">&lt;40%</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 bg-orange-500/60 border border-orange-400 rounded"></div>
+                        <span className="text-gray-300">40-50%</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 bg-yellow-500/60 border border-yellow-400 rounded"></div>
+                        <span className="text-gray-300">50-60%</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 bg-green-500/60 border border-green-400 rounded"></div>
+                        <span className="text-gray-300">60-70%</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 bg-green-600/80 border border-green-500 rounded"></div>
+                        <span className="text-gray-300">≥70%</span>
+                      </div>
+                      <div className="flex items-center gap-2 ml-4">
+                        <div className="w-4 h-4 bg-gray-900 border border-gray-800 rounded"></div>
+                        <span className="text-gray-300">No data</span>
+                      </div>
+                    </div>
+                  </div>
 
-            {/* Legend */}
-            <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800 mb-4">
-              <div className="flex flex-wrap items-center gap-4 text-sm">
-                <span className="text-gray-400">Win Rate:</span>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 bg-red-500/60 border border-red-400 rounded"></div>
-                  <span className="text-gray-300">&lt;40%</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 bg-orange-500/60 border border-orange-400 rounded"></div>
-                  <span className="text-gray-300">40-50%</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 bg-yellow-500/60 border border-yellow-400 rounded"></div>
-                  <span className="text-gray-300">50-60%</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 bg-green-500/60 border border-green-400 rounded"></div>
-                  <span className="text-gray-300">60-70%</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 bg-green-600/80 border border-green-500 rounded"></div>
-                  <span className="text-gray-300">≥70%</span>
-                </div>
-                <div className="flex items-center gap-2 ml-4">
-                  <div className="w-4 h-4 bg-gray-900 border border-gray-800 rounded"></div>
-                  <span className="text-gray-300">No data</span>
-                </div>
-              </div>
-            </div>
+                  {/* Price Grid */}
+                  <div className="bg-gray-900/50 rounded-lg p-4 sm:p-6 border border-gray-800">
+                    <div className="space-y-1 sm:space-y-2">
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((tens) => (
+                        <div key={tens} className="grid grid-cols-10 gap-1 sm:gap-2">
+                          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((ones) => {
+                            const price = tens * 10 + ones
+                            if (price === 0) return <div key={ones}></div>
+                            if (price > 99) return null
 
-            {/* Calendar Grid */}
-            <div className="bg-gray-900/50 rounded-lg p-4 sm:p-6 border border-gray-800">
-              <div className="space-y-1 sm:space-y-2">
-                {/* Price grid rows (0-9, 10-19, etc.) */}
-                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((tens) => (
-                  <div key={tens} className="grid grid-cols-10 gap-1 sm:gap-2">
-                    {/* Cells for this row */}
-                    {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((ones) => {
-                      const price = tens * 10 + ones
-                      if (price === 0) return <div key={ones}></div>
-                      if (price > 99) return null
+                            const stat = pricePointStats.find((s) => s.price === price) || {
+                              price,
+                              totalTrades: 0,
+                              wins: 0,
+                              losses: 0,
+                              winRate: 0,
+                            }
 
-                      const stat = pricePointStats.find((s) => s.price === price) || {
-                        price,
-                        totalTrades: 0,
-                        wins: 0,
-                        losses: 0,
-                        winRate: 0,
-                      }
-
-                      return (
-                        <div
-                          key={ones}
-                          className={`relative aspect-square rounded border transition-all cursor-pointer group ${getWinRateColor(
-                            stat.winRate,
-                            stat.totalTrades
-                          )} ${hoveredPrice === price ? 'ring-2 ring-purple-primary ring-offset-2 ring-offset-gray-900 scale-105 z-10' : ''}`}
-                          onMouseEnter={() => setHoveredPrice(price)}
-                          onMouseLeave={() => setHoveredPrice(null)}
-                          onClick={() => handlePricePointClick(price)}
-                        >
-                          <div className="absolute inset-0 flex flex-col items-center justify-center p-1">
-                            {/* Show price in corner for clarity */}
-                            <div className="absolute top-0.5 left-0.5 text-[8px] text-gray-400 opacity-60">
-                              {price}¢
-                            </div>
-                            <div
-                              className={`text-[10px] sm:text-xs font-semibold ${getTextColor(
-                                stat.winRate,
-                                stat.totalTrades
-                              )}`}
-                            >
-                              {stat.totalTrades > 0
-                                ? `${stat.winRate.toFixed(0)}%`
-                                : ''}
-                            </div>
-                            {stat.totalTrades > 0 && (
+                            return (
                               <div
-                                className={`text-[8px] sm:text-[10px] ${getTextColor(
+                                key={ones}
+                                className={`relative aspect-square rounded border transition-all cursor-pointer group ${getWinRateColor(
                                   stat.winRate,
                                   stat.totalTrades
-                                )} opacity-70`}
+                                )} ${hoveredPrice === price ? 'ring-2 ring-purple-primary ring-offset-2 ring-offset-gray-900 scale-105 z-10' : ''}`}
+                                onMouseEnter={() => setHoveredPrice(price)}
+                                onMouseLeave={() => setHoveredPrice(null)}
+                                onClick={() => stat.totalTrades > 0 && handlePricePointClick(price)}
                               >
-                                {stat.totalTrades} trades
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Tooltip on hover */}
-                          {hoveredPrice === price && (
-                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 bg-gray-800 border border-gray-700 rounded-lg p-3 shadow-xl z-20 min-w-[200px]">
-                              <div className="text-sm font-semibold text-white mb-2">
-                                Price Per Share: {price}¢
-                              </div>
-                              {stat.totalTrades > 0 ? (
-                                <div className="space-y-1 text-xs">
-                                  <div className="flex justify-between">
-                                    <span className="text-gray-400">Win Rate:</span>
-                                    <span className="text-white font-semibold">
-                                      {stat.winRate.toFixed(1)}%
-                                    </span>
+                                <div className="absolute inset-0 flex flex-col items-center justify-center p-1">
+                                  <div className="absolute top-0.5 left-0.5 text-[8px] text-gray-400 opacity-60">
+                                    {price}¢
                                   </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-gray-400">Total Trades:</span>
-                                    <span className="text-white">{stat.totalTrades}</span>
+                                  <div
+                                    className={`text-[10px] sm:text-xs font-semibold ${getTextColor(
+                                      stat.winRate,
+                                      stat.totalTrades
+                                    )}`}
+                                  >
+                                    {stat.totalTrades > 0 ? `${stat.winRate.toFixed(0)}%` : ''}
                                   </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-gray-400">Wins:</span>
-                                    <span className="text-green-400">{stat.wins}</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-gray-400">Losses:</span>
-                                    <span className="text-red-400">{stat.losses}</span>
-                                  </div>
-                                  <div className="mt-2 pt-2 border-t border-gray-700">
-                                    <div className="text-gray-400 text-[10px]">
-                                      Risk/Reward: {stat.winRate >= 50 ? '✅ Favorable' : '⚠️ Unfavorable'} at this price point
+                                  {stat.totalTrades > 0 && (
+                                    <div
+                                      className={`text-[8px] sm:text-[10px] ${getTextColor(
+                                        stat.winRate,
+                                        stat.totalTrades
+                                      )} opacity-70`}
+                                    >
+                                      {stat.totalTrades}
                                     </div>
-                                  </div>
+                                  )}
                                 </div>
-                              ) : (
-                                <div className="text-xs text-gray-400">
-                                  No trades at this price point
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                ))}
-              </div>
 
-              {/* Summary Stats */}
-              <div className="mt-6 pt-6 border-t border-gray-800">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                    <div className="text-xs text-gray-400 mb-1">Best Price Range</div>
-                    <div className="text-white font-semibold text-sm">45-55¢</div>
-                    <div className="text-xs text-gray-500 mt-1">Avg: 72% WR</div>
-                  </div>
-                  <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                    <div className="text-xs text-gray-400 mb-1">Most Traded</div>
-                    <div className="text-white font-semibold text-sm">38-42¢</div>
-                    <div className="text-xs text-gray-500 mt-1">247 trades</div>
-                  </div>
-                  <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                    <div className="text-xs text-gray-400 mb-1">Worst Price Range</div>
-                    <div className="text-white font-semibold text-sm">10-20¢</div>
-                    <div className="text-xs text-gray-500 mt-1">Avg: 45% WR</div>
-                  </div>
-                  <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
-                    <div className="text-xs text-gray-400 mb-1">Price Points Used</div>
-                    <div className="text-white font-semibold text-sm">
-                      {pricePointStats.filter((s) => s.totalTrades > 0).length}/99
+                                {/* Tooltip */}
+                                {hoveredPrice === price && (
+                                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 bg-gray-800 border border-gray-700 rounded-lg p-3 shadow-xl z-20 min-w-[180px]">
+                                    <div className="text-sm font-semibold text-white mb-2">
+                                      Entry Price: {price}¢
+                                    </div>
+                                    {stat.totalTrades > 0 ? (
+                                      <div className="space-y-1 text-xs">
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-400">Win Rate:</span>
+                                          <span className="text-white font-semibold">
+                                            {stat.winRate.toFixed(1)}%
+                                          </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-400">Positions:</span>
+                                          <span className="text-white">{stat.totalTrades}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-400">Wins:</span>
+                                          <span className="text-green-400">{stat.wins}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-400">Losses:</span>
+                                          <span className="text-red-400">{stat.losses}</span>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="text-xs text-gray-400">
+                                        No positions at this price
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ))}
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">Active ranges</div>
+
+                    {/* Summary Stats */}
+                    <div className="mt-6 pt-6 border-t border-gray-800">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
+                          <div className="text-xs text-gray-400 mb-1">Best Price Range</div>
+                          <div className="text-white font-semibold text-sm">
+                            {(() => {
+                              const bestStats = pricePointStats
+                                .filter((s) => s.totalTrades >= 2)
+                                .sort((a, b) => b.winRate - a.winRate)
+                              return bestStats.length > 0 
+                                ? `${bestStats[0].price}¢ (${bestStats[0].winRate.toFixed(0)}%)`
+                                : 'N/A'
+                            })()}
+                          </div>
+                        </div>
+                        <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
+                          <div className="text-xs text-gray-400 mb-1">Most Traded</div>
+                          <div className="text-white font-semibold text-sm">
+                            {(() => {
+                              const mostTraded = pricePointStats
+                                .filter((s) => s.totalTrades > 0)
+                                .sort((a, b) => b.totalTrades - a.totalTrades)
+                              return mostTraded.length > 0 
+                                ? `${mostTraded[0].price}¢ (${mostTraded[0].totalTrades} trades)`
+                                : 'N/A'
+                            })()}
+                          </div>
+                        </div>
+                        <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
+                          <div className="text-xs text-gray-400 mb-1">Worst Price Range</div>
+                          <div className="text-white font-semibold text-sm">
+                            {(() => {
+                              const worstStats = pricePointStats
+                                .filter((s) => s.totalTrades >= 2)
+                                .sort((a, b) => a.winRate - b.winRate)
+                              return worstStats.length > 0 
+                                ? `${worstStats[0].price}¢ (${worstStats[0].winRate.toFixed(0)}%)`
+                                : 'N/A'
+                            })()}
+                          </div>
+                        </div>
+                        <div className="bg-black/50 rounded-lg p-3 border border-gray-800">
+                          <div className="text-xs text-gray-400 mb-1">Price Points Used</div>
+                          <div className="text-white font-semibold text-sm">
+                            {pricePointStats.filter((s) => s.totalTrades > 0).length}/99
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -1275,44 +1005,29 @@ export default function AnalyticsPage() {
             className="bg-black border border-gray-800 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
             <div className="flex items-center justify-between p-6 border-b border-gray-800 bg-black">
               <div>
                 <h2 className="text-2xl font-bold text-white">
-                  Price Point: {selectedPricePoint}¢
+                  Entry Price: {selectedPricePoint}¢
                 </h2>
                 <p className="text-sm text-gray-400 mt-1">
-                  Detailed analysis for trades purchased at this price per share
+                  Positions entered at this price point
                 </p>
               </div>
               <button
                 onClick={closePricePointModal}
                 className="text-gray-400 hover:text-white transition-colors p-2"
               >
-                <svg
-                  className="w-6 h-6"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
 
-            {/* Modal Content */}
             <div className="flex-1 overflow-y-auto p-6 bg-black">
               {(() => {
-                const priceTrades = getTradesForPricePoint(selectedPricePoint)
-                const priceStrategies = getStrategiesForPricePoint(selectedPricePoint)
-                const priceStat = pricePointStats.find(
-                  (s) => s.price === selectedPricePoint
-                ) || {
+                const pricePositions = getTradesForPricePoint(selectedPricePoint)
+                const priceStat = pricePointStats.find((s) => s.price === selectedPricePoint) || {
                   price: selectedPricePoint,
                   totalTrades: 0,
                   wins: 0,
@@ -1322,130 +1037,81 @@ export default function AnalyticsPage() {
 
                 return (
                   <div className="space-y-6">
-                    {/* Statistics Cards */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                       <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
-                        <div className="text-xs text-gray-400 mb-1">Total Trades</div>
-                        <div className="text-white font-bold text-2xl">
-                          {priceStat.totalTrades}
-                        </div>
+                        <div className="text-xs text-gray-400 mb-1">Total Positions</div>
+                        <div className="text-white font-bold text-2xl">{priceStat.totalTrades}</div>
                       </div>
                       <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
                         <div className="text-xs text-gray-400 mb-1">Win Rate</div>
-                        <div className="text-green-400 font-bold text-2xl">
+                        <div className={`font-bold text-2xl ${priceStat.winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
                           {priceStat.winRate.toFixed(1)}%
                         </div>
                       </div>
                       <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
                         <div className="text-xs text-gray-400 mb-1">Wins</div>
-                        <div className="text-green-400 font-bold text-2xl">
-                          {priceStat.wins}
-                        </div>
+                        <div className="text-green-400 font-bold text-2xl">{priceStat.wins}</div>
                       </div>
                       <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
                         <div className="text-xs text-gray-400 mb-1">Losses</div>
-                        <div className="text-red-400 font-bold text-2xl">
-                          {priceStat.losses}
-                        </div>
+                        <div className="text-red-400 font-bold text-2xl">{priceStat.losses}</div>
                       </div>
                     </div>
 
-                    {/* Strategies Using This Price Point */}
-                    <div>
-                      <h3 className="text-lg font-semibold text-white mb-3">
-                        Strategies Using {selectedPricePoint}¢
-                      </h3>
-                      {priceStrategies.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {priceStrategies.map((strategy) => (
-                            <div
-                              key={strategy}
-                              className="bg-purple-primary/20 border border-purple-primary/50 rounded-lg px-4 py-2"
-                            >
-                              <span className="text-purple-primary font-medium text-sm">
-                                {strategy}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
-                          <p className="text-gray-400 text-sm">
-                            No active strategies currently use this price point
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Trading History */}
-                    <div>
-                      <h3 className="text-lg font-semibold text-white mb-3">
-                        Trading History
-                      </h3>
-                      {priceTrades.length > 0 ? (
+                    {pricePositions.length > 0 && (
+                      <div>
+                        <h3 className="text-lg font-semibold text-white mb-3">Position History</h3>
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm">
                             <thead className="text-gray-400 border-b border-gray-800">
                               <tr>
-                                <th className="text-left py-3 px-4 font-medium">Time</th>
+                                <th className="text-left py-3 px-4 font-medium">Closed</th>
                                 <th className="text-left py-3 px-4 font-medium">Market</th>
-                                <th className="text-left py-3 px-4 font-medium">Side</th>
-                                <th className="text-left py-3 px-4 font-medium">Strategy</th>
-                                <th className="text-right py-3 px-4 font-medium">Shares</th>
-                                <th className="text-right py-3 px-4 font-medium">Exit Price</th>
+                                <th className="text-left py-3 px-4 font-medium">Outcome</th>
+                                <th className="text-right py-3 px-4 font-medium">Avg Price</th>
+                                <th className="text-right py-3 px-4 font-medium">Total Bought</th>
                                 <th className="text-right py-3 px-4 font-medium">PnL</th>
-                                <th className="text-right py-3 px-4 font-medium">Status</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {priceTrades.map((trade) => (
-                                <tr
-                                  key={trade.id}
-                                  className="border-b border-gray-800 hover:bg-gray-900/30"
-                                >
-                                  <td className="py-3 px-4 text-gray-400">
-                                    {trade.timestamp}
-                                  </td>
-                                  <td className="py-3 px-4 text-white">{trade.market}</td>
-                                  <td className="py-3 px-4">
-                                    <span className={trade.sideColor}>{trade.side}</span>
-                                  </td>
-                                  <td className="py-3 px-4 text-gray-400 text-xs">
-                                    {trade.strategy}
-                                  </td>
-                                  <td className="py-3 px-4 text-right text-white">
-                                    {trade.shares}
-                                  </td>
-                                  <td className="py-3 px-4 text-right text-gray-400">
-                                    {trade.exitPrice || '-'}
-                                  </td>
-                                  <td className={`py-3 px-4 text-right ${trade.pnlColor}`}>
-                                    {trade.pnl}
-                                  </td>
-                                  <td className="py-3 px-4 text-right">
-                                    <span
-                                      className={`text-xs px-2 py-1 rounded ${
-                                        trade.status === 'Open'
-                                          ? 'bg-green-900/30 text-green-400'
-                                          : 'bg-gray-800 text-gray-400'
-                                      }`}
-                                    >
-                                      {trade.status}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
+                              {pricePositions.map((position, index) => {
+                                const pnl = position.realizedPnl
+                                const pnlColor = pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                                const pnlDisplay = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`
+
+                                return (
+                                  <tr
+                                    key={`${position.conditionId}-${index}`}
+                                    className="border-b border-gray-800 hover:bg-gray-900/30"
+                                  >
+                                    <td className="py-3 px-4 text-gray-400">
+                                      {formatTimestamp(position.timestamp)}
+                                    </td>
+                                    <td className="py-3 px-4 text-white truncate max-w-xs">
+                                      {position.title}
+                                    </td>
+                                    <td className="py-3 px-4">
+                                      <span className={position.outcome === 'Yes' ? 'text-green-400' : 'text-red-400'}>
+                                        {position.outcome}
+                                      </span>
+                                    </td>
+                                    <td className="py-3 px-4 text-right text-white font-mono">
+                                      {Math.round(position.avgPrice * 100)}¢
+                                    </td>
+                                    <td className="py-3 px-4 text-right text-white font-mono">
+                                      ${position.totalBought.toFixed(2)}
+                                    </td>
+                                    <td className={`py-3 px-4 text-right font-mono font-semibold ${pnlColor}`}>
+                                      {pnlDisplay}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
                             </tbody>
                           </table>
                         </div>
-                      ) : (
-                        <div className="bg-black/50 rounded-lg p-4 border border-gray-800">
-                          <p className="text-gray-400 text-sm text-center">
-                            No trades found at this price point
-                          </p>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 )
               })()}
@@ -1456,3 +1122,4 @@ export default function AnalyticsPage() {
     </div>
   )
 }
+

@@ -1,14 +1,40 @@
 'use client'
 
-import { useState, useRef, useEffect, useMemo, KeyboardEvent, MouseEvent } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback, KeyboardEvent, MouseEvent } from 'react'
 import StrategyAnalytics from './StrategyAnalytics'
 import usePolymarketPrices from '@/hooks/usePolymarketPrices'
 import { useTradingContext } from '@/contexts/TradingContext'
 import useCurrentMarket from '@/hooks/useCurrentMarket'
+import { useWallet } from '@/contexts/WalletContext'
+import { useToast } from '@/contexts/ToastContext'
+import { createSignedOrder, OrderSide, OrderType, SignatureType } from '@/lib/polymarket-order-signing'
+import { getBrowserProvider, ensurePolygonNetwork } from '@/lib/polymarket-auth'
+import { 
+  checkUsdcAllowance, 
+  approveUsdc, 
+  syncAllowanceWithPolymarket, 
+  AllowanceStatus, 
+  CTF_EXCHANGE, 
+  NEG_RISK_CTF_EXCHANGE,
+  checkConditionalTokenApproval,
+  approveConditionalTokens,
+  syncConditionalTokenAllowance,
+  ConditionalTokenApprovalStatus,
+} from '@/lib/usdc-approval'
+
+// Position interface for tracking user's shares
+interface MarketPosition {
+  upShares: number
+  downShares: number
+  upAvgPrice: number
+  downAvgPrice: number
+}
 
 
 const TradingPanel = () => {
   const { selectedPair, selectedTimeframe, activeTokenId, setActiveTokenId, marketOffset } = useTradingContext()
+  const { walletAddress, polymarketCredentials, isPolymarketAuthenticated } = useWallet()
+  const { showToast } = useToast()
   const [orderType, setOrderType] = useState<'market' | 'strategy' | 'analytics'>('market')
   const [executionType, setExecutionType] = useState<'market' | 'limit'>('market')
   const [amount, setAmount] = useState('')
@@ -16,6 +42,16 @@ const TradingPanel = () => {
   // Single shared state for UP/DOWN selection - applies to both Buy and Sell
   const [selectedOutcome, setSelectedOutcome] = useState<'up' | 'down'>('up')
   const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null)
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false)
+  const [isApprovingUsdc, setIsApprovingUsdc] = useState(false)
+  const [allowanceStatus, setAllowanceStatus] = useState<AllowanceStatus | null>(null)
+  const [isCheckingAllowance, setIsCheckingAllowance] = useState(false)
+  // Conditional token approval status (needed for SELL orders)
+  const [ctfApprovalStatus, setCtfApprovalStatus] = useState<ConditionalTokenApprovalStatus | null>(null)
+  const [isApprovingCtf, setIsApprovingCtf] = useState(false)
+  // Track user's position in current market for selling
+  const [currentPosition, setCurrentPosition] = useState<MarketPosition>({ upShares: 0, downShares: 0, upAvgPrice: 0, downAvgPrice: 0 })
+  const [isLoadingPosition, setIsLoadingPosition] = useState(false)
   const [enabledStrategies, setEnabledStrategies] = useState<Record<string, boolean>>({
     'Momentum Breakout': false,
     'RSI Reversal': false,
@@ -274,6 +310,463 @@ const TradingPanel = () => {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     handlePolymarketLinkClick()
+  }
+
+  // Check USDC allowance when wallet connects or changes
+  useEffect(() => {
+    const checkAllowance = async () => {
+      if (!walletAddress || typeof window === 'undefined') {
+        setAllowanceStatus(null)
+        return
+      }
+
+      setIsCheckingAllowance(true)
+      try {
+        const provider = await getBrowserProvider()
+        if (!provider) {
+          console.warn('[Allowance] No provider available')
+          return
+        }
+
+        // Check both regular and neg-risk exchanges
+        const [regularStatus, negRiskStatus] = await Promise.all([
+          checkUsdcAllowance(provider, walletAddress, CTF_EXCHANGE),
+          checkUsdcAllowance(provider, walletAddress, NEG_RISK_CTF_EXCHANGE),
+        ])
+
+        // Combine status - need approval for both exchanges
+        const combinedStatus: AllowanceStatus = {
+          ...regularStatus,
+          needsAnyApproval: regularStatus.needsAnyApproval || negRiskStatus.needsAnyApproval,
+        }
+
+        setAllowanceStatus(combinedStatus)
+        console.log('[Allowance] Status:', combinedStatus)
+      } catch (error) {
+        console.error('[Allowance] Error checking:', error)
+      } finally {
+        setIsCheckingAllowance(false)
+      }
+    }
+
+    checkAllowance()
+  }, [walletAddress])
+
+  // Check conditional token approval when wallet connects (needed for SELL orders)
+  useEffect(() => {
+    const checkCtfAllowance = async () => {
+      if (!walletAddress || typeof window === 'undefined') {
+        setCtfApprovalStatus(null)
+        return
+      }
+
+      console.log('[CTF Approval] Checking approval status for:', walletAddress)
+      
+      try {
+        const provider = await getBrowserProvider()
+        if (!provider) {
+          console.warn('[CTF Approval] No provider available')
+          return
+        }
+
+        const status = await checkConditionalTokenApproval(provider, walletAddress)
+        setCtfApprovalStatus(status)
+        console.log('[CTF Approval] Status loaded:', status)
+        
+        if (status.needsApproval) {
+          console.log('[CTF Approval] Approval needed for selling')
+        } else {
+          console.log('[CTF Approval] ✓ Already approved for selling')
+        }
+      } catch (error) {
+        console.error('[CTF Approval] Error checking:', error)
+        // Set as needing approval on error so user can still try
+        setCtfApprovalStatus({
+          ctfApproved: false,
+          negRiskApproved: false,
+          needsApproval: true,
+        })
+      }
+    }
+
+    checkCtfAllowance()
+  }, [walletAddress])
+
+  // Handle conditional token approval (for selling)
+  const handleApproveConditionalTokens = async () => {
+    if (!walletAddress) {
+      showToast('Please connect your wallet first', 'error')
+      return
+    }
+
+    setIsApprovingCtf(true)
+    console.log('[CTF Approval] Starting approval process...')
+
+    try {
+      const provider = await getBrowserProvider()
+      if (!provider) throw new Error('No provider available')
+
+      await ensurePolygonNetwork(provider)
+      
+      showToast('Approving tokens... Please confirm 2 transactions in your wallet', 'info')
+      console.log('[CTF Approval] Calling approveConditionalTokens...')
+
+      // Approve conditional tokens (2 transactions)
+      const result = await approveConditionalTokens(provider)
+      console.log('[CTF Approval] Approval complete, tx hashes:', result.txHashes)
+
+      showToast('✓ On-chain approval complete!', 'success')
+
+      // Sync with Polymarket API
+      if (polymarketCredentials) {
+        console.log('[CTF Approval] Syncing with Polymarket API...')
+        showToast('Syncing with Polymarket...', 'info')
+        const syncResult = await syncConditionalTokenAllowance(walletAddress, polymarketCredentials)
+        console.log('[CTF Approval] Sync result:', syncResult)
+      }
+
+      // Refresh status
+      console.log('[CTF Approval] Refreshing approval status...')
+      const newStatus = await checkConditionalTokenApproval(provider, walletAddress)
+      console.log('[CTF Approval] New status:', newStatus)
+      setCtfApprovalStatus(newStatus)
+
+      if (!newStatus.needsApproval) {
+        showToast('🎉 Tokens approved! You can now sell your positions.', 'success')
+      } else {
+        showToast('Approval completed but status still shows pending. Try refreshing.', 'info')
+      }
+    } catch (error: any) {
+      console.error('[CTF Approval] Error:', error)
+      if (error.code === 4001 || error.message?.includes('rejected') || error.message?.includes('user rejected')) {
+        showToast('Approval cancelled by user', 'error')
+      } else {
+        showToast(`Approval failed: ${error.message || 'Unknown error'}`, 'error')
+      }
+    } finally {
+      setIsApprovingCtf(false)
+      console.log('[CTF Approval] Process finished')
+    }
+  }
+
+  // Fetch user's position for current market (for selling)
+  const fetchCurrentPosition = useCallback(async () => {
+    if (!walletAddress || !currentMarket.yesTokenId || !currentMarket.noTokenId) {
+      setCurrentPosition({ upShares: 0, downShares: 0, upAvgPrice: 0, downAvgPrice: 0 })
+      return
+    }
+
+    setIsLoadingPosition(true)
+    try {
+      const response = await fetch(`/api/user/positions?address=${walletAddress}`)
+      if (response.ok) {
+        const data = await response.json()
+        const positions = data.positions || []
+        
+        // Find positions matching the current market's token IDs
+        let upShares = 0
+        let downShares = 0
+        let upAvgPrice = 0
+        let downAvgPrice = 0
+        
+        for (const pos of positions) {
+          const posAsset = pos.asset || pos.tokenId || ''
+          if (posAsset === currentMarket.yesTokenId) {
+            upShares = parseFloat(pos.size || '0')
+            upAvgPrice = parseFloat(pos.avgPrice || '0')
+          } else if (posAsset === currentMarket.noTokenId) {
+            downShares = parseFloat(pos.size || '0')
+            downAvgPrice = parseFloat(pos.avgPrice || '0')
+          }
+        }
+        
+        setCurrentPosition({ upShares, downShares, upAvgPrice, downAvgPrice })
+        console.log('[Trading] Position loaded:', { upShares, downShares, upAvgPrice, downAvgPrice })
+      }
+    } catch (error) {
+      console.error('[Trading] Error fetching position:', error)
+      setCurrentPosition({ upShares: 0, downShares: 0, upAvgPrice: 0, downAvgPrice: 0 })
+    } finally {
+      setIsLoadingPosition(false)
+    }
+  }, [walletAddress, currentMarket.yesTokenId, currentMarket.noTokenId])
+
+  // Refresh position when market or wallet changes
+  useEffect(() => {
+    fetchCurrentPosition()
+  }, [fetchCurrentPosition])
+
+  // Get available shares for selling based on selected outcome
+  const availableShares = selectedOutcome === 'up' ? currentPosition.upShares : currentPosition.downShares
+  const avgEntryPrice = selectedOutcome === 'up' ? currentPosition.upAvgPrice : currentPosition.downAvgPrice
+
+  // Handle setting max shares for selling
+  const handleMaxShares = () => {
+    if (availableShares > 0) {
+      setAmount(availableShares.toString())
+    }
+  }
+
+  // Handle USDC approval
+  const handleApproveUsdc = async () => {
+    if (!walletAddress) {
+      showToast('Please connect your wallet first', 'error')
+      return
+    }
+
+    setIsApprovingUsdc(true)
+    showToast('Approving USDC for trading... Please confirm in your wallet', 'info')
+
+    try {
+      const provider = await getBrowserProvider()
+      if (!provider) {
+        throw new Error('No provider available')
+      }
+
+      // Ensure we're on Polygon
+      await ensurePolygonNetwork(provider)
+
+      // Determine which USDC to approve (native has balance)
+      const usdcType = allowanceStatus?.nativeUsdc.balance ? 'native' : 'bridged'
+
+      // Approve for regular CTF Exchange
+      showToast(`Approving ${usdcType} USDC for CTF Exchange...`, 'info')
+      await approveUsdc(provider, usdcType, CTF_EXCHANGE)
+
+      // Approve for Neg-Risk CTF Exchange
+      showToast(`Approving ${usdcType} USDC for Neg-Risk Exchange...`, 'info')
+      await approveUsdc(provider, usdcType, NEG_RISK_CTF_EXCHANGE)
+
+      showToast('On-chain approval complete! Syncing with Polymarket...', 'info')
+
+      // Sync with Polymarket's internal balance/allowance system
+      // This is required for Polymarket to recognize the on-chain approval
+      if (polymarketCredentials) {
+        const syncResult = await syncAllowanceWithPolymarket(walletAddress, polymarketCredentials)
+        console.log('[Approval] Sync result:', syncResult)
+        
+        if (syncResult.collateral) {
+          showToast('USDC approved and synced! You can now trade on Polymarket.', 'success')
+        } else {
+          showToast('USDC approved on-chain. If trading fails, try again or refresh the page.', 'warning')
+        }
+      } else {
+        showToast('USDC approved! Please authenticate with Polymarket if not already done.', 'success')
+      }
+
+      // Refresh allowance status
+      const newStatus = await checkUsdcAllowance(provider, walletAddress, CTF_EXCHANGE)
+      setAllowanceStatus(newStatus)
+    } catch (error: any) {
+      console.error('[Approval] Error:', error)
+      if (error.code === 4001 || error.message?.includes('rejected')) {
+        showToast('Approval cancelled by user', 'error')
+      } else {
+        showToast(`Approval failed: ${error.message || 'Unknown error'}`, 'error')
+      }
+    } finally {
+      setIsApprovingUsdc(false)
+    }
+  }
+
+  // Test credentials before placing order
+  const testCredentials = async () => {
+    if (!walletAddress || !polymarketCredentials) {
+      showToast('No credentials to test', 'error')
+      return
+    }
+
+    showToast('Testing credentials...', 'info')
+
+    try {
+      const response = await fetch('/api/polymarket/test-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          walletAddress,
+          credentials: polymarketCredentials,
+        }),
+      })
+
+      const result = await response.json()
+      console.log('[Test Credentials] Result:', result)
+
+      if (result.success) {
+        showToast('Credentials are valid!', 'success')
+      } else {
+        showToast(`Credentials invalid: ${result.error || 'Unknown error'}`, 'error')
+        console.error('[Test Credentials] Error details:', result)
+      }
+    } catch (error: any) {
+      console.error('[Test Credentials] Error:', error)
+      showToast(`Test failed: ${error.message}`, 'error')
+    }
+  }
+
+  // Handle order placement
+  const handlePlaceOrder = async () => {
+    // Validation
+    if (!walletAddress) {
+      showToast('Please connect your wallet first', 'error')
+      return
+    }
+
+    if (!isPolymarketAuthenticated || !polymarketCredentials) {
+      showToast('Please authenticate with Polymarket first', 'error')
+      return
+    }
+
+    if (!currentMarket.yesTokenId || !currentMarket.noTokenId) {
+      showToast('Market token IDs not available. Please wait for market data to load.', 'error')
+      return
+    }
+
+    const shares = parseFloat(amount)
+    if (!shares || shares <= 0) {
+      showToast('Please enter a valid number of shares', 'error')
+      return
+    }
+
+    // For SELL orders, validate user has enough shares
+    if (!isBuy) {
+      const maxShares = selectedOutcome === 'up' ? currentPosition.upShares : currentPosition.downShares
+      if (shares > maxShares) {
+        showToast(`You only have ${maxShares.toFixed(2)} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'} shares to sell`, 'error')
+        return
+      }
+      if (maxShares <= 0) {
+        showToast(`You don't have any ${selectedOutcome === 'up' ? 'UP' : 'DOWN'} shares to sell`, 'error')
+        return
+      }
+    }
+
+    // For limit orders, validate price
+    if (executionType === 'limit') {
+      const price = parseFloat(limitPrice)
+      if (!price || price <= 0 || price > 100) {
+        showToast('Please enter a valid limit price (0-100 cents)', 'error')
+        return
+      }
+    }
+
+    setIsPlacingOrder(true)
+
+    try {
+      // Get browser provider
+      const provider = getBrowserProvider()
+      if (!provider) {
+        throw new Error('No wallet provider found. Please install MetaMask or Phantom.')
+      }
+
+      // Ensure we're on Polygon network
+      await ensurePolygonNetwork(provider)
+
+      // Determine token ID based on selected outcome
+      const tokenId = selectedOutcome === 'up' ? currentMarket.yesTokenId! : currentMarket.noTokenId!
+
+      // Determine order side
+      const side = isBuy ? OrderSide.BUY : OrderSide.SELL
+
+      // Convert price from cents to decimal (e.g., 50 -> 0.50)
+      const priceDecimal = executionType === 'limit' 
+        ? parseFloat(limitPrice) / 100 
+        : selectedOutcome === 'up'
+          ? parseFloat(yesPriceFormatted) / 100
+          : parseFloat(noPriceFormatted) / 100
+
+      // Determine order type
+      let polymarketOrderType: OrderType
+      if (executionType === 'limit') {
+        // For limit orders, use GTC (Good-Til-Cancelled)
+        // Could add GTD support later with expiration date
+        polymarketOrderType = OrderType.GTC
+      } else {
+        // For market orders, use FOK (Fill-Or-Kill)
+        // Could add FAK support later
+        polymarketOrderType = OrderType.FOK
+      }
+
+      // Check if this is a neg-risk market (determines which exchange to use for signing)
+      let isNegRiskMarket = false
+      try {
+        const negRiskResponse = await fetch(`/api/polymarket/neg-risk?tokenId=${tokenId}`)
+        const negRiskData = await negRiskResponse.json()
+        isNegRiskMarket = negRiskData.negRisk === true
+        console.log(`[Trading] Token ${tokenId.substring(0, 20)}... negRisk: ${isNegRiskMarket}`)
+      } catch (error) {
+        console.warn('[Trading] Failed to check neg-risk status, defaulting to false:', error)
+      }
+
+      // Show info toast about signing requirement
+      showToast('Please sign the order in your wallet...', 'info')
+
+      // Create and sign the order (this will prompt user to sign)
+      const signedOrder = await createSignedOrder(
+        {
+          tokenId: tokenId,
+          side: side,
+          price: priceDecimal,
+          size: shares,
+          maker: walletAddress,
+          signer: walletAddress,
+          negRisk: isNegRiskMarket,
+        },
+        provider,
+        SignatureType.EOA
+      )
+
+      // Send order to our API
+      const response = await fetch('/api/trade/place-order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          walletAddress: walletAddress,
+          credentials: polymarketCredentials,
+          signedOrder: signedOrder,
+          orderType: polymarketOrderType,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok || !result.success) {
+        console.error('[Trading] Order placement failed:', result)
+        console.error('[Trading] Full error details:', JSON.stringify(result.details, null, 2))
+        console.error('[Trading] Error code:', result.errorCode)
+        throw new Error(result.error || result.details?.error || result.details?.errorMsg || 'Failed to place order')
+      }
+
+      // Build success message with order details
+      const orderTypeText = executionType === 'limit' ? 'Limit' : 'Market'
+      const sideText = isBuy ? 'Buy' : 'Sell'
+      const outcomeText = selectedOutcome === 'up' ? 'UP' : 'DOWN'
+      const priceText = executionType === 'limit' 
+        ? `@ ${limitPrice}¢` 
+        : `@ ${(priceDecimal * 100).toFixed(0)}¢`
+      
+      const successMessage = `Order placed! ${sideText} ${outcomeText} ${shares} shares ${priceText} (${orderTypeText})${result.orderId ? ` | ID: ${result.orderId}` : ''}`
+      
+      showToast(successMessage, 'success')
+      
+      // Clear form after successful order
+      setAmount('')
+      if (executionType === 'limit') {
+        setLimitPrice('')
+      }
+    } catch (error: any) {
+      console.error('Error placing order:', error)
+      
+      // Check if user rejected the signature
+      if (error.message?.includes('rejected') || error.message?.includes('User rejected')) {
+        showToast('Order cancelled - signature rejected', 'warning')
+      } else {
+        showToast(error.message || 'Failed to place order. Please try again.', 'error')
+      }
+    } finally {
+      setIsPlacingOrder(false)
+    }
   }
 
   const selectableAmountPresets = useMemo(
@@ -767,14 +1260,33 @@ const TradingPanel = () => {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-sm text-white">Shares</label>
-              <button
-                onClick={() => setAmount('0')}
-                className="text-gray-400 hover:text-white transition-colors text-xs"
-                aria-label="Reset shares"
-                title="Reset"
-              >
-                Reset
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Show available shares for Sell mode */}
+                {!isBuy && (
+                  <span className="text-xs text-gray-400">
+                    {isLoadingPosition ? 'Loading...' : `Available: ${availableShares.toFixed(2)}`}
+                  </span>
+                )}
+                {/* Max button for Sell mode */}
+                {!isBuy && availableShares > 0 && (
+                  <button
+                    onClick={handleMaxShares}
+                    className="text-purple-400 hover:text-purple-300 transition-colors text-xs font-medium"
+                    aria-label="Use max shares"
+                    title="Sell all shares"
+                  >
+                    Max
+                  </button>
+                )}
+                <button
+                  onClick={() => setAmount('0')}
+                  className="text-gray-400 hover:text-white transition-colors text-xs"
+                  aria-label="Reset shares"
+                  title="Reset"
+                >
+                  Reset
+                </button>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -905,20 +1417,257 @@ const TradingPanel = () => {
         </div>
       </div>
 
+      {/* Sell Position Info - Show when selling and user has/doesn't have position */}
+      {!isBuy && walletAddress && (
+        <div className="border-b border-gray-800 p-4 flex-shrink-0">
+          <div className={`rounded-lg border p-3 space-y-2 ${
+            availableShares > 0 
+              ? 'border-green-800/50 bg-green-900/20' 
+              : 'border-yellow-800/50 bg-yellow-900/20'
+          }`}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-400">
+                {selectedOutcome === 'up' ? 'UP' : 'DOWN'} Position
+              </span>
+              <div className="flex items-center gap-2">
+                {isLoadingPosition ? (
+                  <span className="text-xs text-gray-400">Loading...</span>
+                ) : availableShares > 0 ? (
+                  <span className="text-xs text-green-400">
+                    {availableShares.toFixed(2)} shares
+                  </span>
+                ) : (
+                  <span className="text-xs text-yellow-400">No position</span>
+                )}
+                {/* Refresh position button */}
+                <button
+                  onClick={fetchCurrentPosition}
+                  disabled={isLoadingPosition}
+                  className="text-gray-400 hover:text-white disabled:text-gray-600 transition-colors p-1"
+                  aria-label="Refresh position"
+                  title="Refresh position"
+                >
+                  <svg 
+                    className={`w-3 h-3 ${isLoadingPosition ? 'animate-spin' : ''}`} 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            
+            {availableShares > 0 && (
+              <>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-500">Avg Entry:</span>
+                  <span className="text-gray-300 font-mono">{(avgEntryPrice * 100).toFixed(1)}¢</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-500">Current:</span>
+                  <span className="text-gray-300 font-mono">
+                    {selectedOutcome === 'up' ? yesPriceFormatted : noPriceFormatted}¢
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-500">Est. P&L:</span>
+                  {(() => {
+                    const currentPrice = selectedOutcome === 'up' 
+                      ? parseFloat(yesPriceFormatted) / 100 
+                      : parseFloat(noPriceFormatted) / 100
+                    const pnl = (currentPrice - avgEntryPrice) * availableShares
+                    return (
+                      <span className={`font-mono ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                      </span>
+                    )
+                  })()}
+                </div>
+              </>
+            )}
+            
+            {availableShares <= 0 && !isLoadingPosition && (
+              <p className="text-xs text-yellow-400/80">
+                You don&apos;t have any {selectedOutcome === 'up' ? 'UP' : 'DOWN'} shares to sell.
+                Switch to Buy or select a different outcome.
+              </p>
+            )}
+            
+            {/* Conditional Token Approval for Selling */}
+            {availableShares > 0 && ctfApprovalStatus?.needsApproval && (
+              <div className="mt-3 pt-3 border-t border-gray-800/50">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-orange-400 flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    Token Approval Required
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400 mb-2">
+                  Approve position tokens to enable selling.
+                </p>
+                <button
+                  onClick={handleApproveConditionalTokens}
+                  disabled={isApprovingCtf}
+                  className="w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-colors bg-orange-500/10 border-orange-500/50 text-orange-400 hover:bg-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isApprovingCtf ? (
+                    <>
+                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Approving...
+                    </>
+                  ) : (
+                    'Approve Tokens for Selling'
+                  )}
+                </button>
+              </div>
+            )}
+            
+            {availableShares > 0 && ctfApprovalStatus && !ctfApprovalStatus.needsApproval && (
+              <div className="mt-2 text-xs text-green-400 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  ✓ Tokens approved for selling
+                </span>
+              </div>
+            )}
+            
+            {/* Manual refresh button for CTF approval status */}
+            {availableShares > 0 && (
+              <button
+                onClick={async () => {
+                  try {
+                    const provider = await getBrowserProvider()
+                    if (provider && walletAddress) {
+                      showToast('Checking approval status...', 'info')
+                      const status = await checkConditionalTokenApproval(provider, walletAddress)
+                      setCtfApprovalStatus(status)
+                      if (status.needsApproval) {
+                        showToast('Token approval still needed', 'info')
+                      } else {
+                        showToast('✓ Tokens are approved!', 'success')
+                      }
+                    }
+                  } catch (e) {
+                    console.error('Error refreshing CTF status:', e)
+                  }
+                }}
+                className="mt-2 text-xs text-gray-500 hover:text-gray-300 underline"
+              >
+                Refresh approval status
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Main Action Button */}
       <div className="p-4 flex-shrink-0 space-y-3">
+        {/* USDC Approval Status & Button */}
+        {walletAddress && isPolymarketAuthenticated && allowanceStatus && (
+          <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-400">USDC Trading Status</span>
+              {isCheckingAllowance ? (
+                <span className="text-xs text-yellow-400">Checking...</span>
+              ) : allowanceStatus.needsAnyApproval ? (
+                <span className="text-xs text-orange-400 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  Approval Required
+                </span>
+              ) : (
+                <span className="text-xs text-green-400 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  Ready to Trade
+                </span>
+              )}
+            </div>
+            
+            {/* Balance Info */}
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-500">USDC Balance:</span>
+              <span className="text-gray-300 font-mono">
+                ${((allowanceStatus.nativeUsdc.balance || 0) + (allowanceStatus.bridgedUsdc.balance || 0)).toFixed(2)}
+              </span>
+            </div>
+
+            {/* Approve Button */}
+            {allowanceStatus.needsAnyApproval && allowanceStatus.hasAnyBalance && (
+              <button
+                onClick={handleApproveUsdc}
+                disabled={isApprovingUsdc}
+                className="w-full py-2 px-3 rounded-lg text-xs font-semibold transition-all duration-200 bg-purple-600/20 border border-purple-500 text-purple-400 hover:bg-purple-600/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isApprovingUsdc ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Approving...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Approve USDC for Trading
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* No Balance Warning */}
+            {!allowanceStatus.hasAnyBalance && (
+              <div className="text-xs text-yellow-400 bg-yellow-900/20 border border-yellow-800/50 rounded px-2 py-1.5">
+                No USDC balance. Deposit USDC to your wallet to trade.
+              </div>
+            )}
+          </div>
+        )}
+
         <button
-          disabled={isMarketEnded}
+          disabled={
+            isMarketEnded || 
+            isPlacingOrder || 
+            !isPolymarketAuthenticated || 
+            (isBuy && allowanceStatus?.needsAnyApproval && allowanceStatus?.hasAnyBalance) ||
+            (!isBuy && availableShares <= 0) ||
+            (!isBuy && ctfApprovalStatus?.needsApproval)
+          }
+          onClick={handlePlaceOrder}
           className={`w-full py-3 rounded-lg font-bold text-sm transition-all duration-200 border ${
-            isMarketEnded
+            isMarketEnded || isPlacingOrder || !isPolymarketAuthenticated || (isBuy && allowanceStatus?.needsAnyApproval && allowanceStatus?.hasAnyBalance) || (!isBuy && availableShares <= 0) || (!isBuy && ctfApprovalStatus?.needsApproval)
               ? 'bg-gray-800/50 border-gray-700 text-gray-500 cursor-not-allowed'
               : isTradingUp
               ? 'bg-green-500/10 border-green-500 text-green-400 hover:bg-green-500/20'
               : 'bg-red-500/10 border-red-500 text-red-400 hover:bg-red-500/20'
           }`}
         >
-          {isMarketEnded
+          {isPlacingOrder
+            ? 'PLACING ORDER...'
+            : !isPolymarketAuthenticated
+            ? 'AUTHENTICATE WITH POLYMARKET'
+            : (isBuy && allowanceStatus?.needsAnyApproval && allowanceStatus?.hasAnyBalance)
+            ? 'APPROVE USDC FIRST'
+            : isMarketEnded
             ? 'MARKET ENDED'
+            : (!isBuy && availableShares <= 0)
+            ? `NO ${selectedOutcome === 'up' ? 'UP' : 'DOWN'} SHARES TO SELL`
+            : (!isBuy && ctfApprovalStatus?.needsApproval)
+            ? 'APPROVE TOKENS FIRST'
             : executionType === 'limit'
             ? `${isBuy ? 'BUY' : 'SELL'} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'} @ LIMIT`
             : `${isBuy ? 'BUY' : 'SELL'} ${selectedOutcome === 'up' ? 'UP' : 'DOWN'}`}
@@ -959,6 +1708,15 @@ const TradingPanel = () => {
               {formattedMarketEnd ? ` → ${formattedMarketEnd}` : ''}{' '}
               <span className="text-gray-500">(ET)</span>
             </p>
+          )}
+          {/* Debug: Test credentials button */}
+          {isPolymarketAuthenticated && (
+            <button
+              onClick={testCredentials}
+              className="mt-2 text-xs text-purple-400 hover:text-purple-300 underline"
+            >
+              Test API Credentials
+            </button>
           )}
         </div>
       </div>

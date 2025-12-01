@@ -5,6 +5,7 @@ import { useRef, useState, useEffect, useCallback } from 'react'
 import { useWallet } from '@/contexts/WalletContext'
 import ConnectWalletModal from './ConnectWalletModal'
 import PolymarketAuthModal from './PolymarketAuthModal'
+import DepositModal from './DepositModal'
 
 interface BalanceData {
   portfolioValue: number
@@ -17,6 +18,7 @@ const Header = () => {
   const { isConnected, walletAddress, disconnectWallet, isPolymarketAuthenticated } = useWallet()
   const [showConnectModal, setShowConnectModal] = useState(false)
   const [showPolymarketAuthModal, setShowPolymarketAuthModal] = useState(false)
+  const [showDepositModal, setShowDepositModal] = useState(false)
   const [isProfileMenuVisible, setIsProfileMenuVisible] = useState(false)
   const profileMenuRef = useRef<HTMLDivElement | null>(null)
   const [balances, setBalances] = useState<BalanceData>({ portfolioValue: 0, cashBalance: 0 })
@@ -98,8 +100,11 @@ const Header = () => {
   }
 
   const handleDepositClick = () => {
-    // TODO: Implement deposit functionality
-    console.log('Deposit clicked')
+    if (!isConnected) {
+      setShowConnectModal(true)
+      return
+    }
+    setShowDepositModal(true)
   }
 
   const handleProfileClick = () => {
@@ -274,10 +279,19 @@ const Header = () => {
                   className="absolute right-0 top-full pt-1 z-50"
                   style={{ zIndex: 9999 }}
                 >
-                  <div className="w-40 rounded-xl border border-gray-800 bg-black/95 text-white shadow-lg backdrop-blur">
+                  <div className="w-40 rounded-lg border border-gray-800 bg-black/95 text-white shadow-lg backdrop-blur overflow-hidden">
+                    <a
+                      href="https://docs.polymarket.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block w-full px-4 py-2.5 text-left text-sm text-gray-200 hover:bg-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-primary transition-colors"
+                    >
+                      Docs
+                    </a>
+                    <div className="h-px bg-gray-800" />
                     <button
                       onClick={handleLogoutClick}
-                      className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-primary rounded-xl"
+                      className="block w-full px-4 py-2.5 text-left text-sm text-gray-200 hover:bg-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-primary transition-colors"
                     >
                       Log out
                     </button>
@@ -301,6 +315,16 @@ const Header = () => {
         onClose={() => setShowPolymarketAuthModal(false)}
         onSuccess={() => {
           setShowPolymarketAuthModal(false)
+        }}
+      />
+
+      {/* Deposit Modal */}
+      <DepositModal
+        isOpen={showDepositModal}
+        onClose={() => {
+          setShowDepositModal(false)
+          // Refresh balances when modal closes
+          fetchBalances()
         }}
       />
     </header>

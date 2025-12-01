@@ -4,14 +4,12 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useWallet } from '@/contexts/WalletContext'
 import { getBrowserProvider, ensurePolygonNetwork } from '@/lib/polymarket-auth'
-import { ethers } from 'ethers'
 
 interface ConnectWalletModalProps {
   isOpen: boolean
   onClose: () => void
 }
 
-// Extend Window interface for Phantom
 declare global {
   interface Window {
     phantom?: {
@@ -31,46 +29,35 @@ declare global {
 
 export default function ConnectWalletModal({ isOpen, onClose }: ConnectWalletModalProps) {
   const { connectWallet } = useWallet()
-  const [showInstructions, setShowInstructions] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [error, setError] = useState('')
   const [isConnecting, setIsConnecting] = useState(false)
   const [mounted, setMounted] = useState(false)
-  const [walletType, setWalletType] = useState<'metamask' | 'phantom' | null>(null)
 
   useEffect(() => {
     setMounted(true)
-    // Detect available wallets
-    if (typeof window !== 'undefined') {
-      if (window.ethereum?.isMetaMask) {
-        setWalletType('metamask')
-      } else if ((window as any).phantom?.ethereum || window.ethereum?.isPhantom) {
-        setWalletType('phantom')
-      }
-    }
   }, [])
 
-  const handleConnectWallet = async (preferredType?: 'metamask' | 'phantom') => {
+  const handleConnectWallet = async () => {
     setError('')
     setIsConnecting(true)
 
     try {
       const provider = getBrowserProvider()
       if (!provider) {
-        setError('No wallet found. Please install MetaMask or Phantom extension.')
+        setError('No wallet found. Please install MetaMask or Phantom.')
         setIsConnecting(false)
         return
       }
 
-      // Request account access FIRST (required before switching networks)
       const accounts = await provider.send('eth_requestAccounts', [])
 
       if (!accounts || accounts.length === 0) {
-        setError('No accounts found. Please make sure your wallet is unlocked.')
+        setError('No accounts found. Please unlock your wallet.')
         setIsConnecting(false)
         return
       }
 
-      // Now ensure we're on Polygon network (after authorization)
       await ensurePolygonNetwork(provider)
 
       const address = accounts[0]
@@ -79,30 +66,19 @@ export default function ConnectWalletModal({ isOpen, onClose }: ConnectWalletMod
     } catch (err: any) {
       console.error('Wallet connection error:', err)
       if (err.code === 4001) {
-        if (err.message?.includes('network switch')) {
-          setError('Network switch was rejected. Please approve the switch to Polygon in your wallet.')
-        } else {
-          setError('Connection rejected. Please approve the connection request in your wallet.')
-        }
-      } else if (err.message?.includes('network switch') || err.message?.includes('switch network')) {
-        setError('Please approve the network switch to Polygon in your wallet.')
-      } else if (err.message?.includes('rejected')) {
-        setError(err.message)
+        setError('Connection rejected. Please approve in your wallet.')
+      } else if (err.message?.includes('network')) {
+        setError('Please approve the network switch to Polygon.')
       } else {
-        setError('Failed to connect wallet. Please make sure your wallet is installed, enabled, and unlocked.')
+        setError('Connection failed. Please try again.')
       }
     } finally {
       setIsConnecting(false)
     }
   }
 
-  const handleConnectPhantom = () => handleConnectWallet('phantom')
-  const handleConnectMetaMask = () => handleConnectWallet('metamask')
-
   useEffect(() => {
     if (isOpen) {
-      console.log('Modal is open, rendering...')
-      // Prevent body scroll when modal is open
       document.body.style.overflow = 'hidden'
     } else {
       document.body.style.overflow = 'unset'
@@ -114,222 +90,144 @@ export default function ConnectWalletModal({ isOpen, onClose }: ConnectWalletMod
 
   if (!isOpen || !mounted) return null
 
+  const hasMetaMask = typeof window !== 'undefined' && window.ethereum?.isMetaMask
+  const hasPhantom = typeof window !== 'undefined' && ((window as any).phantom?.ethereum || window.ethereum?.isPhantom)
+
   const modalContent = (
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
       style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.85)',
-        backdropFilter: 'blur(8px)',
-        zIndex: 9999,
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        backdropFilter: 'blur(4px)',
       }}
       onClick={onClose}
     >
       <div
-        className="bg-black border border-gray-800 rounded-lg w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+        className="bg-[#0d0d0d] border border-gray-800/60 rounded-xl w-full max-w-sm overflow-hidden shadow-2xl"
         onClick={(e) => e.stopPropagation()}
-        style={{
-          maxWidth: '42rem',
-        }}
       >
-          {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-gray-800 bg-black">
-            <h2 className="text-2xl font-bold text-white">Connect Wallet</h2>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800/60">
+          <h2 className="text-lg font-semibold text-white">Connect Wallet</h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white transition-colors p-2"
+            className="text-gray-500 hover:text-white transition-colors"
           >
-            <svg
-              className="w-6 h-6"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
         {/* Content */}
-        <div 
-          className="flex-1 overflow-y-auto p-6 scrollbar-hide"
-          style={{ 
-            scrollbarWidth: 'none',
-            msOverflowStyle: 'none',
-          }}
-        >
-          <div className="space-y-6">
-            {/* Important Notice */}
-            <div className="bg-purple-primary/10 border border-purple-primary/30 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <svg
-                  className="w-5 h-5 text-purple-primary mt-0.5 flex-shrink-0"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-                <div>
-                  <h3 className="text-purple-primary font-semibold mb-1">
-                    Trade with Your Polymarket Account
-                  </h3>
-                  <p className="text-gray-300 text-sm">
-                    You can use your existing Polymarket wallet! Export your private key from Polymarket and import it into MetaMask or Phantom, then connect here to trade with your Polymarket account.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Polymarket Wallet Instructions */}
-            <div>
-              <button
-                onClick={() => setShowInstructions(!showInstructions)}
-                className="w-full flex items-center justify-between p-4 bg-black/50 border border-gray-800 rounded-lg hover:bg-black/70 transition-colors"
-              >
-                <span className="text-white font-medium">
-                  How to Use Your Polymarket Wallet
-                </span>
-                <svg
-                  className={`w-5 h-5 text-gray-400 transition-transform ${
-                    showInstructions ? 'rotate-180' : ''
-                  }`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 9l-7 7-7-7"
-                  />
-                </svg>
-              </button>
-
-              {showInstructions && (
-                <div className="mt-4 p-4 bg-black/50 border border-gray-800 rounded-lg space-y-4">
-                  <div>
-                    <h4 className="text-white font-semibold mb-3">Step-by-Step Instructions:</h4>
-                    <ol className="list-decimal list-inside space-y-3 text-gray-300 text-sm">
-                      <li>Go to <a href="https://polymarket.com" target="_blank" rel="noopener noreferrer" className="text-purple-primary hover:underline">Polymarket.com</a> and log in</li>
-                      <li>Go to Settings → Security → Export Private Key</li>
-                      <li>Copy your private key (keep it secure!)</li>
-                      <li>Open MetaMask or Phantom extension</li>
-                      <li>Click "Import Account" or "Add Wallet"</li>
-                      <li>Paste your private key to import your Polymarket wallet</li>
-                      <li>Come back here and click "Connect Wallet" to use your Polymarket account</li>
-                    </ol>
-                  </div>
-
-                  <div className="pt-4 border-t border-gray-800 bg-blue-900/20 border border-blue-800/50 rounded p-3">
-                    <p className="text-blue-400 text-sm font-semibold mb-1">What This Means</p>
-                    <p className="text-gray-300 text-xs">
-                      Once imported, you'll have access to all your Polymarket funds, positions, and trading history. All trades will use your Polymarket account balance.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-
-            {/* Wallet Connection Options */}
-            <div>
-              {error && (
-                <div className="mb-4 p-3 bg-red-900/20 border border-red-800/50 rounded">
-                  <p className="text-sm text-red-400">{error}</p>
-                </div>
-              )}
-              
-              <div className="space-y-3">
-                {/* MetaMask Option */}
-                <button
-                  onClick={handleConnectMetaMask}
-                  disabled={isConnecting || !window.ethereum?.isMetaMask}
-                  className="w-full p-4 bg-black/50 border border-gray-800 rounded-lg hover:bg-black/70 transition-colors flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <img 
-                      src="/wallets/MetaMask-icon-fox.svg" 
-                      alt="MetaMask" 
-                      className="w-6 h-6"
-                    />
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className="text-white font-medium">MetaMask</p>
-                    <p className="text-gray-400 text-xs">
-                      {window.ethereum?.isMetaMask ? 'Connect with MetaMask' : 'Install MetaMask extension'}
-                    </p>
-                  </div>
-                  {!window.ethereum?.isMetaMask && (
-                    <a
-                      href="https://metamask.io/download/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-xs text-blue-400 hover:text-blue-300"
-                    >
-                      Install →
-                    </a>
-                  )}
-                </button>
-
-                {/* Phantom Option */}
-                <button
-                  onClick={handleConnectPhantom}
-                  disabled={isConnecting || (!(window as any).phantom?.ethereum && !window.ethereum?.isPhantom)}
-                  className="w-full p-4 bg-black/50 border border-gray-800 rounded-lg hover:bg-black/70 transition-colors flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <img 
-                      src="/wallets/Phantom-Icon_Transparent_Purple.svg" 
-                      alt="Phantom" 
-                      className="w-6 h-6"
-                    />
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className="text-white font-medium">Phantom</p>
-                    <p className="text-gray-400 text-xs">
-                      {((window as any).phantom?.ethereum || window.ethereum?.isPhantom) ? 'Connect with Phantom' : 'Install Phantom extension'}
-                    </p>
-                  </div>
-                  {!(window as any).phantom?.ethereum && !window.ethereum?.isPhantom && (
-                    <a
-                      href="https://phantom.app/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-xs text-blue-400 hover:text-blue-300"
-                    >
-                      Install →
-                    </a>
-                  )}
-                </button>
-              </div>
-            </div>
+        <div className="p-5 space-y-4">
+          {/* Quick Requirements Note */}
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-950/20 border border-blue-800/30">
+            <svg className="w-4 h-4 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-xs text-blue-200/80">
+              You&apos;ll need <strong>USDC</strong> + <strong>POL</strong> (gas) on Polygon to trade
+            </p>
           </div>
+
+          {/* Error */}
+          {error && (
+            <div className="px-3 py-2 rounded-lg bg-red-950/30 border border-red-800/30">
+              <p className="text-xs text-red-400">{error}</p>
+            </div>
+          )}
+
+          {/* Wallet Options */}
+          <div className="space-y-2">
+            {/* MetaMask */}
+            <button
+              onClick={handleConnectWallet}
+              disabled={isConnecting || !hasMetaMask}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-gray-900/50 border border-gray-800/60 hover:border-gray-700 hover:bg-gray-900/80 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="w-9 h-9 rounded-lg bg-orange-500/10 flex items-center justify-center">
+                <img src="/wallets/MetaMask-icon-fox.svg" alt="" className="w-5 h-5" />
+              </div>
+              <div className="flex-1 text-left">
+                <p className="text-sm font-medium text-white">MetaMask</p>
+                <p className="text-xs text-gray-500">
+                  {hasMetaMask ? 'Popular browser wallet' : 'Not installed'}
+                </p>
+              </div>
+              {!hasMetaMask && (
+                <a
+                  href="https://metamask.io/download/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                >
+                  Install
+                </a>
+              )}
+            </button>
+
+            {/* Phantom */}
+            <button
+              onClick={handleConnectWallet}
+              disabled={isConnecting || !hasPhantom}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-gray-900/50 border border-gray-800/60 hover:border-gray-700 hover:bg-gray-900/80 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="w-9 h-9 rounded-lg bg-purple-500/10 flex items-center justify-center">
+                <img src="/wallets/Phantom-Icon_Transparent_Purple.svg" alt="" className="w-5 h-5" />
+              </div>
+              <div className="flex-1 text-left">
+                <p className="text-sm font-medium text-white">Phantom</p>
+                <p className="text-xs text-gray-500">
+                  {hasPhantom ? 'Multi-chain wallet' : 'Not installed'}
+                </p>
+              </div>
+              {!hasPhantom && (
+                <a
+                  href="https://phantom.app/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                >
+                  Install
+                </a>
+              )}
+            </button>
+          </div>
+
+          {/* Help Toggle */}
+          <button
+            onClick={() => setShowHelp(!showHelp)}
+            className="w-full flex items-center justify-between px-1 py-2 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            <span>Using Polymarket wallet? How to import</span>
+            <svg className={`w-4 h-4 transition-transform ${showHelp ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* Help Content */}
+          {showHelp && (
+            <div className="p-3 rounded-lg bg-gray-900/30 border border-gray-800/40 space-y-2">
+              <p className="text-xs text-gray-400">
+                Export your private key from <a href="https://polymarket.com" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline">Polymarket.com</a> (Settings → Security), 
+                then import it into MetaMask or Phantom to use your existing account.
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                <span className="text-xs text-gray-500">Your funds & positions will be accessible here</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-gray-800 flex gap-3 bg-black">
+        <div className="px-5 py-4 border-t border-gray-800/60">
           <button
             onClick={onClose}
-            className="flex-1 px-4 py-2 bg-gray-900 border border-gray-800 text-white rounded hover:bg-gray-800 transition-colors"
-            disabled={isConnecting}
+            className="w-full px-4 py-2.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium transition-colors"
           >
             Cancel
           </button>
@@ -340,4 +238,3 @@ export default function ConnectWalletModal({ isOpen, onClose }: ConnectWalletMod
 
   return createPortal(modalContent, document.body)
 }
-

@@ -38,15 +38,37 @@ export async function POST(req: Request) {
 
     if (deriveResponse.ok) {
       const data = await deriveResponse.json()
-      console.log('Successfully derived API key')
+      console.log('Successfully derived API key, raw response:', JSON.stringify(data, null, 2))
+      
+      // Check all possible field names
+      const apiKey = data.apiKey || data.api_key || data.key
+      const secret = data.secret || data.apiSecret || data.api_secret
+      const passphrase = data.passphrase || data.apiPassphrase || data.api_passphrase
+      
+      console.log('Parsed credentials:', { 
+        apiKey: apiKey?.substring(0, 10) + '...', 
+        secretLength: secret?.length,
+        passphraseLength: passphrase?.length 
+      })
+      
+      if (!apiKey || !secret || !passphrase) {
+        console.error('Missing credential fields! Available fields:', Object.keys(data))
+        return NextResponse.json({
+          error: 'Incomplete credentials returned from Polymarket',
+          availableFields: Object.keys(data),
+        }, { status: 500 })
+      }
+      
       return NextResponse.json({
-        apiKey: data.apiKey || data.api_key,
-        secret: data.secret,
-        passphrase: data.passphrase,
+        apiKey,
+        secret,
+        passphrase,
       })
     }
 
-    console.log('Derive failed, trying to create new API key...')
+    const deriveError = await deriveResponse.text()
+    console.log('Derive failed with status:', deriveResponse.status, 'error:', deriveError)
+    console.log('Trying to create new API key...')
 
     // If derive fails, try to create a new API key
     const createResponse = await fetch(`${POLYMARKET_CLOB_API}/auth/api-key`, {
@@ -76,13 +98,31 @@ export async function POST(req: Request) {
     }
 
     const data = await createResponse.json()
-    console.log('Successfully created API key')
+    console.log('Successfully created API key, raw response:', JSON.stringify(data, null, 2))
     
-    // Polymarket returns: { apiKey, secret, passphrase }
+    // Check all possible field names
+    const apiKey = data.apiKey || data.api_key || data.key
+    const secret = data.secret || data.apiSecret || data.api_secret
+    const passphrase = data.passphrase || data.apiPassphrase || data.api_passphrase
+    
+    console.log('Parsed credentials:', { 
+      apiKey: apiKey?.substring(0, 10) + '...', 
+      secretLength: secret?.length,
+      passphraseLength: passphrase?.length 
+    })
+    
+    if (!apiKey || !secret || !passphrase) {
+      console.error('Missing credential fields! Available fields:', Object.keys(data))
+      return NextResponse.json({
+        error: 'Incomplete credentials returned from Polymarket',
+        availableFields: Object.keys(data),
+      }, { status: 500 })
+    }
+    
     return NextResponse.json({
-      apiKey: data.apiKey || data.api_key,
-      secret: data.secret,
-      passphrase: data.passphrase,
+      apiKey,
+      secret,
+      passphrase,
     })
   } catch (error: any) {
     console.error('API key generation error:', error)
