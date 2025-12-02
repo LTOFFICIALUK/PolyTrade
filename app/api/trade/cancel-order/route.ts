@@ -5,70 +5,72 @@ import { makeAuthenticatedRequest } from '@/lib/polymarket-api-auth'
 import { PolymarketApiCredentials } from '@/lib/polymarket-api-auth'
 
 /**
- * DELETE /api/trade/cancel-order
- * Cancel an open order on Polymarket using L2 API credentials
+ * POST /api/trade/cancel-order
+ * Cancels an open order on Polymarket
  */
-export async function DELETE(req: Request) {
+export async function POST(req: Request) {
   try {
-    const { searchParams } = new URL(req.url)
-    const orderId = searchParams.get('orderId')
-    const walletAddress = searchParams.get('walletAddress')
-    const credentialsParam = searchParams.get('credentials')
+    const body = await req.json()
+    const { orderId, walletAddress, credentials } = body
 
-    // Validate required fields
     if (!orderId) {
-      return NextResponse.json(
-        { error: 'Missing required parameter: orderId' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Missing order ID' }, { status: 400 })
     }
 
-    if (!walletAddress || !credentialsParam) {
-      return NextResponse.json(
-        { error: 'Missing required parameters: walletAddress, credentials' },
-        { status: 400 }
-      )
+    if (!walletAddress) {
+      return NextResponse.json({ error: 'Missing wallet address' }, { status: 400 })
     }
 
-    // Parse credentials from query param
-    const credentials = JSON.parse(credentialsParam)
-
-    // Validate credentials structure
-    const apiCredentials: PolymarketApiCredentials = {
-      apiKey: credentials.apiKey,
-      secret: credentials.secret,
-      passphrase: credentials.passphrase,
+    if (!credentials) {
+      return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
     }
 
-    // Make authenticated request to Polymarket
+    const apiCredentials: PolymarketApiCredentials = credentials
+
+    console.log('[Cancel Order] Canceling order:', orderId)
+    console.log('[Cancel Order] Wallet:', walletAddress.slice(0, 10) + '...')
+
+    // Cancel order via DELETE /order/{orderId}
     const response = await makeAuthenticatedRequest(
       'DELETE',
-      `/orders/${orderId}`,
+      `/order/${orderId}`,
       walletAddress,
       apiCredentials
     )
 
+    console.log('[Cancel Order] Response status:', response.status)
+
     if (!response.ok) {
       const errorText = await response.text()
-      console.error('Polymarket cancel order error:', response.status, errorText)
-      return NextResponse.json(
-        { error: `Failed to cancel order: ${response.status}`, details: errorText },
-        { status: response.status }
-      )
+      console.error('[Cancel Order] Error:', response.status, errorText)
+      
+      let errorData
+      try {
+        errorData = JSON.parse(errorText)
+      } catch {
+        errorData = { error: errorText }
+      }
+
+      return NextResponse.json({
+        success: false,
+        error: errorData.error || errorData.errorMsg || `Failed to cancel order: ${response.status}`,
+        details: errorData,
+      }, { status: response.status })
     }
 
-    const cancelData = await response.json()
+    const data = await response.json()
+    console.log('[Cancel Order] Success:', data)
+
     return NextResponse.json({
       success: true,
       message: 'Order cancelled successfully',
-      data: cancelData,
+      data,
     })
   } catch (error: any) {
-    console.error('Cancel order error:', error)
-    return NextResponse.json(
-      { error: error.message || 'Failed to cancel order' },
-      { status: 500 }
-    )
+    console.error('[Cancel Order] Exception:', error)
+    return NextResponse.json({
+      success: false,
+      error: error.message || 'Failed to cancel order',
+    }, { status: 500 })
   }
 }
-

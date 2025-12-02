@@ -106,15 +106,19 @@ function calculateAmounts(
   // Price is in decimal (e.g., 0.50 for 50 cents)
   // Size is in shares
   // Both amounts use 6 decimals (1e6) as per Polymarket standard
+  //
+  // IMPORTANT: Polymarket requires specific precision:
+  // - BUY: makerAmount (USDC) max 4 decimals, takerAmount (tokens) max 2 decimals
+  // - SELL: makerAmount (tokens) max 2 decimals, takerAmount (USDC) max 4 decimals
   
   const TOKEN_DECIMALS = 1e6 // Polymarket uses 6 decimals for everything
   
   if (side === OrderSide.BUY) {
     // Buying: maker pays USDC, receives tokens
-    // makerAmount = price * size (what you pay in USDC)
-    // takerAmount = size (what you receive in tokens)
-    const rawTakerAmount = Math.floor(size * 100) / 100 // Round down to 2 decimals
-    const rawMakerAmount = rawTakerAmount * price
+    // makerAmount = price * size (what you pay in USDC) - max 4 decimals
+    // takerAmount = size (what you receive in tokens) - max 2 decimals
+    const rawTakerAmount = Math.floor(size * 100) / 100 // Round to 2 decimals
+    const rawMakerAmount = Math.floor(rawTakerAmount * price * 10000) / 10000 // Round to 4 decimals
     
     const makerAmount = Math.floor(rawMakerAmount * TOKEN_DECIMALS).toString()
     const takerAmount = Math.floor(rawTakerAmount * TOKEN_DECIMALS).toString()
@@ -122,10 +126,10 @@ function calculateAmounts(
     return { makerAmount, takerAmount }
   } else {
     // Selling: maker pays tokens, receives USDC
-    // makerAmount = size (what you sell in tokens)
-    // takerAmount = price * size (what you receive in USDC)
-    const rawMakerAmount = Math.floor(size * 100) / 100 // Round down to 2 decimals
-    const rawTakerAmount = rawMakerAmount * price
+    // makerAmount = size (what you sell in tokens) - max 2 decimals
+    // takerAmount = price * size (what you receive in USDC) - max 4 decimals
+    const rawMakerAmount = Math.floor(size * 100) / 100 // Round to 2 decimals
+    const rawTakerAmount = Math.floor(rawMakerAmount * price * 10000) / 10000 // Round to 4 decimals
     
     const makerAmount = Math.floor(rawMakerAmount * TOKEN_DECIMALS).toString()
     const takerAmount = Math.floor(rawTakerAmount * TOKEN_DECIMALS).toString()

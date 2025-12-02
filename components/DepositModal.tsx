@@ -282,7 +282,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
                     <div className="w-5 h-5 rounded-full bg-red-900/50 flex items-center justify-center flex-shrink-0">
                       <svg className="w-3 h-3 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
+                    </svg>
                     </div>
                     <div className="flex-1">
                       <span className="text-sm text-gray-500">Regular USDC</span>

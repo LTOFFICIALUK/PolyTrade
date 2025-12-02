@@ -61,7 +61,7 @@ export async function POST(req: Request) {
     }
 
     // Validate order type
-    const validOrderTypes: OrderType[] = ['GTC', 'GTD', 'FOK', 'FAK']
+    const validOrderTypes: OrderType[] = [OrderType.GTC, OrderType.GTD, OrderType.FOK, OrderType.FAK]
     if (!validOrderTypes.includes(orderType as OrderType)) {
       return NextResponse.json(
         { error: `Invalid order type. Must be one of: ${validOrderTypes.join(', ')}` },

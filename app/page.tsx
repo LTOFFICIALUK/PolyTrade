@@ -9,7 +9,10 @@ import OrderBook, { OrderBookHandle } from '@/components/OrderBook'
 import AnimatedPrice from '@/components/AnimatedPrice'
 import { TradingProvider, useTradingContext } from '@/contexts/TradingContext'
 import { useWallet } from '@/contexts/WalletContext'
+import { useToast } from '@/contexts/ToastContext'
 import useCurrentMarket from '@/hooks/useCurrentMarket'
+import { redeemPosition } from '@/lib/redeem-positions'
+import { getBrowserProvider } from '@/lib/polymarket-auth'
 
 interface Position {
   market: string
@@ -21,6 +24,11 @@ interface Position {
   pnl: number
   tokenId?: string
   conditionId?: string
+  redeemable?: boolean
+  outcomeIndex?: number
+  slug?: string
+  resolved?: boolean  // Market has resolved
+  isLoss?: boolean    // Position lost (curPrice near 0 after resolution)
 }
 
 interface Order {
@@ -48,9 +56,11 @@ interface Trade {
 function TerminalContent() {
   const { selectedPair, showTradingView, selectedTimeframe, marketOffset } = useTradingContext()
   const { walletAddress, polymarketCredentials } = useWallet()
+  const { showToast } = useToast()
   const [activeTab, setActiveTab] = useState<'position' | 'orders' | 'history' | 'orderbook'>('position')
   const [, forceUpdate] = useState({})
   const orderBookRef = useRef<OrderBookHandle>(null)
+  const [isClaimingPosition, setIsClaimingPosition] = useState<string | null>(null)
   
   // Get current market for live price matching
   const { market: currentMarket } = useCurrentMarket({
@@ -90,17 +100,34 @@ function TerminalContent() {
       const response = await fetch(`/api/user/positions?address=${walletAddress}`)
       if (response.ok) {
         const data = await response.json()
-        const formattedPositions: Position[] = (data.positions || []).map((pos: any) => ({
-          market: pos.title || pos.market || 'Unknown Market',
-          outcome: pos.outcome || 'Yes',
-          side: pos.side || 'BUY',
-          size: parseFloat(pos.size || '0'),
-          avgPrice: parseFloat(pos.avgPrice || '0'),
-          currentPrice: parseFloat(pos.curPrice || pos.currentPrice || '0'),
-          pnl: parseFloat(pos.cashPnl || pos.pnl || '0'),
-          tokenId: pos.asset || pos.tokenId || pos.token_id || '',
-          conditionId: pos.conditionId || pos.condition_id || '',
-        }))
+        const formattedPositions: Position[] = (data.positions || []).map((pos: any) => {
+          const curPrice = parseFloat(pos.curPrice || pos.currentPrice || '0')
+          const isRedeemable = pos.redeemable === true
+          
+          // A position is a "loss" if:
+          // - Market is resolved (redeemable is true) AND
+          // - Current price is 0 or near 0 (meaning this outcome lost)
+          const isLoss = isRedeemable && curPrice < 0.01
+          
+          // Only truly redeemable (winner) if redeemable=true AND curPrice > 0
+          const isWinner = isRedeemable && curPrice > 0.01
+          
+          return {
+            market: pos.title || pos.market || 'Unknown Market',
+            outcome: pos.outcome || 'Yes',
+            side: pos.side || 'BUY',
+            size: parseFloat(pos.size || '0'),
+            avgPrice: parseFloat(pos.avgPrice || '0'),
+            currentPrice: curPrice,
+            pnl: parseFloat(pos.cashPnl || pos.pnl || '0'),
+            tokenId: pos.asset || pos.tokenId || pos.token_id || '',
+            conditionId: pos.conditionId || pos.condition_id || '',
+            redeemable: isWinner, // Only show Claim for actual winners
+            outcomeIndex: pos.outcomeIndex ?? 0,
+            slug: pos.slug || pos.eventSlug || '',
+            isLoss: isLoss, // Show Close for resolved losers
+          }
+        })
         setPositions(formattedPositions)
       }
     } catch (error) {
@@ -114,17 +141,31 @@ function TerminalContent() {
     try {
       // Build URL with credentials if available (required for Polymarket API)
       let url = `/api/user/orders?address=${walletAddress}`
+      const hasCredentials = !!polymarketCredentials
       if (polymarketCredentials) {
         url += `&credentials=${encodeURIComponent(JSON.stringify(polymarketCredentials))}`
       }
       
+      console.log('[Home] Fetching orders...', { hasCredentials, walletAddress: walletAddress.slice(0, 10) + '...' })
+      
       const response = await fetch(url)
+      const data = await response.json()
+      
+      console.log('[Home] Orders API response:', { 
+        status: response.status,
+        source: data.source,
+        orderCount: Array.isArray(data.orders) ? data.orders.length : 0,
+        error: data.error,
+        errorDetails: data.errorDetails,
+        rawOrders: data.orders?.slice(0, 2) // Log first 2 raw orders for debugging
+      })
+      
+      // Log detailed error if API failed
+      if (data.source !== 'polymarket-api' && data.source !== 'websocket') {
+        console.error('[Home] Orders API Error:', data.error, data.errorDetails)
+      }
+      
       if (response.ok) {
-        const data = await response.json()
-        console.log('[Home] Orders API response:', { 
-          orderCount: Array.isArray(data.orders) ? data.orders.length : 0,
-          orders: data.orders?.slice(0, 2) // Log first 2 orders for debugging
-        })
         const formattedOrders: Order[] = (data.orders || []).map((order: any) => {
           // Parse size - could be in different formats
           let size = 0
@@ -194,6 +235,132 @@ function TerminalContent() {
     setIsLoading(false)
   }, [fetchPositions, fetchOrders, fetchTrades])
 
+  // Handle claiming a winning position
+  const handleClaimPosition = useCallback(async (position: Position) => {
+    if (!position.conditionId || isClaimingPosition) return
+    
+    setIsClaimingPosition(position.conditionId)
+    showToast('Preparing to claim position...', 'info')
+    
+    try {
+      const provider = await getBrowserProvider()
+      if (!provider) {
+        throw new Error('No wallet provider found')
+      }
+      
+      showToast('Please confirm the transaction in your wallet...', 'info')
+      
+      const txHash = await redeemPosition(
+        provider,
+        position.conditionId,
+        position.outcomeIndex ?? 0
+      )
+      
+      showToast(`✓ Position claimed! TX: ${txHash.slice(0, 10)}...`, 'success')
+      
+      // Refresh positions after claim
+      setTimeout(() => {
+        fetchPositions()
+      }, 2000)
+    } catch (error: any) {
+      console.error('[Claim] Error:', error)
+      if (error.message?.includes('rejected') || error.code === 4001) {
+        showToast('Claim cancelled', 'warning')
+      } else {
+        showToast(`Failed to claim: ${error.message || 'Unknown error'}`, 'error')
+      }
+    } finally {
+      setIsClaimingPosition(null)
+    }
+  }, [isClaimingPosition, showToast, fetchPositions])
+
+  // Handle closing a losing position (same mechanism, just removes from portfolio)
+  const handleClosePosition = useCallback(async (position: Position) => {
+    if (!position.conditionId || isClaimingPosition) return
+    
+    setIsClaimingPosition(position.conditionId)
+    showToast('Preparing to close position...', 'info')
+    
+    try {
+      const provider = await getBrowserProvider()
+      if (!provider) {
+        throw new Error('No wallet provider found')
+      }
+      
+      showToast('Please confirm the transaction in your wallet...', 'info')
+      
+      // Same function as claim - for losing positions, you get $0 back
+      const txHash = await redeemPosition(
+        provider,
+        position.conditionId,
+        position.outcomeIndex ?? 0
+      )
+      
+      showToast(`✓ Position closed! TX: ${txHash.slice(0, 10)}...`, 'success')
+      
+      // Refresh positions after close
+      setTimeout(() => {
+        fetchPositions()
+      }, 2000)
+    } catch (error: any) {
+      console.error('[Close] Error:', error)
+      if (error.message?.includes('rejected') || error.code === 4001) {
+        showToast('Close cancelled', 'warning')
+      } else if (error.message?.includes('condition not resolved')) {
+        showToast('Market not yet resolved. Please wait for resolution.', 'error')
+      } else {
+        showToast(`Failed to close: ${error.message || 'Unknown error'}`, 'error')
+      }
+    } finally {
+      setIsClaimingPosition(null)
+    }
+  }, [isClaimingPosition, showToast, fetchPositions])
+
+  // State for cancelling orders
+  const [isCancellingOrder, setIsCancellingOrder] = useState<string | null>(null)
+
+  // Handle cancelling an open order
+  const handleCancelOrder = useCallback(async (order: Order) => {
+    if (!order.id || isCancellingOrder) return
+    if (!walletAddress || !polymarketCredentials) {
+      showToast('Please connect wallet and authenticate with Polymarket', 'error')
+      return
+    }
+    
+    setIsCancellingOrder(order.id)
+    showToast('Cancelling order...', 'info')
+    
+    try {
+      const response = await fetch('/api/trade/cancel-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: order.id,
+          walletAddress,
+          credentials: polymarketCredentials,
+        }),
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Failed to cancel order')
+      }
+      
+      showToast('✓ Order cancelled!', 'success')
+      
+      // Refresh orders after cancel
+      setTimeout(() => {
+        fetchOrders()
+      }, 1000)
+    } catch (error: any) {
+      console.error('[Cancel] Error:', error)
+      showToast(`Failed to cancel: ${error.message || 'Unknown error'}`, 'error')
+    } finally {
+      setIsCancellingOrder(null)
+    }
+  }, [isCancellingOrder, walletAddress, polymarketCredentials, showToast, fetchOrders])
+
   // Fetch live orderbook prices for current market (same as TradingPanel)
   useEffect(() => {
     const fetchLivePrices = async () => {
@@ -249,6 +416,20 @@ function TerminalContent() {
       return () => clearInterval(interval)
     }
   }, [walletAddress, refreshData])
+
+  // Listen for order placement events to refresh orders
+  useEffect(() => {
+    const handleOrderPlaced = () => {
+      console.log('[Home] Order placed event received, refreshing orders...')
+      // Wait a moment for the order to be processed by Polymarket
+      setTimeout(() => {
+        fetchOrders()
+      }, 1500)
+    }
+
+    window.addEventListener('orderPlaced', handleOrderPlaced)
+    return () => window.removeEventListener('orderPlaced', handleOrderPlaced)
+  }, [fetchOrders])
 
   const bottomSectionHeightClass =
     activeTab === 'orderbook' ? 'h-[23rem]' : 'h-72'
@@ -372,17 +553,22 @@ function TerminalContent() {
                     <th className="text-right py-3 px-4 font-medium">Avg Price</th>
                     <th className="text-right py-3 px-4 font-medium">Current</th>
                     <th className="text-right py-3 px-4 font-medium">PnL</th>
+                    <th className="text-right py-3 px-4 font-medium">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!walletAddress ? (
                     <tr>
-                      <td colSpan={7} className="py-8 px-4 text-center text-gray-500 text-sm">
+                      <td colSpan={8} className="py-8 px-4 text-center text-gray-500 text-sm">
                         Connect wallet to view positions
                       </td>
                     </tr>
                   ) : positions.length > 0 ? (
                     positions.map((position, idx) => {
+                      // For resolved positions (redeemable or loss), use the position's actual price
+                      // Don't override with live orderbook prices for settled markets
+                      const isResolved = position.redeemable || position.isLoss
+                      
                       // Check if position matches current market by tokenId or outcome
                       const positionIsUp = position.outcome?.toLowerCase().includes('yes') || 
                                           position.outcome?.toLowerCase().includes('up') ||
@@ -391,16 +577,15 @@ function TerminalContent() {
                                             position.outcome?.toLowerCase().includes('down') ||
                                             position.tokenId === currentMarket?.noTokenId
                       
-                      const matchesCurrentMarket = currentMarket?.yesTokenId && currentMarket?.noTokenId && 
+                      const matchesCurrentMarket = !isResolved && currentMarket?.yesTokenId && currentMarket?.noTokenId && 
                         (position.tokenId === currentMarket.yesTokenId || 
                          position.tokenId === currentMarket.noTokenId ||
                          (positionIsUp && currentMarket.yesTokenId) ||
                          (positionIsDown && currentMarket.noTokenId))
                       
-                      // Use live price if position matches current market
-                      // For positions, use bid price (what you can sell for) - this is the market value
+                      // Use live price ONLY for active (non-resolved) positions matching current market
                       let livePriceCents: number | null = null
-                      if (matchesCurrentMarket) {
+                      if (matchesCurrentMarket && !isResolved) {
                         if (position.tokenId === currentMarket?.yesTokenId || positionIsUp) {
                           livePriceCents = livePrices.upBidPrice
                         } else if (position.tokenId === currentMarket?.noTokenId || positionIsDown) {
@@ -408,18 +593,34 @@ function TerminalContent() {
                         }
                       }
                       
-                      const currentPrice = livePriceCents !== null 
-                        ? livePriceCents / 100 
-                        : position.currentPrice
+                      // For resolved positions, always use the position's curPrice from API
+                      const currentPrice = isResolved 
+                        ? position.currentPrice 
+                        : (livePriceCents !== null ? livePriceCents / 100 : position.currentPrice)
                       
-                      // Recalculate PnL based on live price if available
-                      const calculatedPnl = matchesCurrentMarket && livePriceCents !== null
-                        ? (currentPrice - position.avgPrice) * position.size
-                        : position.pnl
+                      // Use API PnL for resolved positions, calculate for active ones
+                      const calculatedPnl = isResolved
+                        ? position.pnl
+                        : (matchesCurrentMarket && livePriceCents !== null
+                            ? (currentPrice - position.avgPrice) * position.size
+                            : position.pnl)
                       
                       return (
                         <tr key={idx} className="border-b border-gray-800 hover:bg-gray-900/30">
-                          <td className="py-3 px-4 text-white max-w-xs truncate" title={position.market}>{position.market}</td>
+                          <td className="py-3 px-4 max-w-xs truncate" title={position.market}>
+                            {position.slug ? (
+                              <a
+                                href={`https://polymarket.com/event/${position.slug}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-white hover:text-purple-400 hover:underline transition-colors cursor-pointer"
+                              >
+                                {position.market}
+                              </a>
+                            ) : (
+                              <span className="text-white">{position.market}</span>
+                            )}
+                          </td>
                           <td className="py-3 px-4 text-gray-300">{position.outcome}</td>
                           <td className="py-3 px-4">
                             <span className={position.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>
@@ -440,12 +641,42 @@ function TerminalContent() {
                           <td className={`py-3 px-4 text-right ${calculatedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                             {calculatedPnl >= 0 ? '+' : ''}${calculatedPnl.toFixed(2)}
                           </td>
+                          <td className="py-3 px-4 text-right">
+                            {position.redeemable ? (
+                              <button
+                                onClick={() => handleClaimPosition(position)}
+                                disabled={isClaimingPosition === position.conditionId}
+                                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                                  isClaimingPosition === position.conditionId
+                                    ? 'bg-gray-600 text-gray-300 cursor-wait'
+                                    : 'bg-green-600 hover:bg-green-500 text-white'
+                                }`}
+                              >
+                                {isClaimingPosition === position.conditionId ? 'Claiming...' : 'Claim'}
+                              </button>
+                            ) : position.isLoss ? (
+                              <button
+                                onClick={() => handleClosePosition(position)}
+                                disabled={isClaimingPosition === position.conditionId}
+                                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                                  isClaimingPosition === position.conditionId
+                                    ? 'bg-gray-600 text-gray-300 cursor-wait'
+                                    : 'bg-red-900/60 hover:bg-red-800/60 text-red-300 border border-red-700/50'
+                                }`}
+                                title="Close losing position (removes from portfolio)"
+                              >
+                                {isClaimingPosition === position.conditionId ? 'Closing...' : 'Close'}
+                              </button>
+                            ) : (
+                              <span className="text-gray-600 text-xs">-</span>
+                            )}
+                          </td>
                         </tr>
                       )
                     })
                   ) : (
                     <tr>
-                      <td colSpan={7} className="py-8 px-4 text-center text-gray-500 text-sm">
+                      <td colSpan={8} className="py-8 px-4 text-center text-gray-500 text-sm">
                         {isLoading ? 'Loading positions...' : 'No open positions'}
                       </td>
                     </tr>
@@ -503,7 +734,17 @@ function TerminalContent() {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-right">
-                          <button className="text-red-400 hover:text-red-300 text-xs">Cancel</button>
+                          <button 
+                            onClick={() => handleCancelOrder(order)}
+                            disabled={isCancellingOrder === order.id}
+                            className={`text-xs transition-colors ${
+                              isCancellingOrder === order.id
+                                ? 'text-gray-500 cursor-wait'
+                                : 'text-red-400 hover:text-red-300'
+                            }`}
+                          >
+                            {isCancellingOrder === order.id ? 'Cancelling...' : 'Cancel'}
+                          </button>
                         </td>
                       </tr>
                     ))
