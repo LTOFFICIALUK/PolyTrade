@@ -10,7 +10,7 @@ import http from 'http'
 import { WebSocketServer } from './ws/server'
 import { MarketsStateStore } from './state/marketsState'
 import { fetchMarketsList, fetchOrderbook, fetchMultipleOrderbooks, fetchMarketBySlug, MarketMetadata } from './polymarket/clobClient'
-import { initializePriceRecorder, recordPrice, closePriceRecorder } from './db/priceRecorder'
+import { initializePriceRecorder, recordPrice, closePriceRecorder, queryPriceHistory } from './db/priceRecorder'
 
 const POLYMARKET_GAMMA_API = process.env.POLYMARKET_GAMMA_API || 'https://gamma-api.polymarket.com'
 
@@ -1107,6 +1107,47 @@ const httpServer = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: error.message || 'Invalid request' }))
       }
     })
+    return
+  }
+
+  // Price history endpoint
+  if (path === '/api/price-history' && req.method === 'GET') {
+    const marketId = url.searchParams.get('marketId')
+    const yesTokenId = url.searchParams.get('yesTokenId')
+    const noTokenId = url.searchParams.get('noTokenId')
+    const startTimeParam = url.searchParams.get('startTime')
+    const endTimeParam = url.searchParams.get('endTime')
+
+    // We need either marketId OR both tokenIds
+    if (!marketId && (!yesTokenId || !noTokenId)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Missing required parameters: marketId OR (yesTokenId and noTokenId)' }))
+      return
+    }
+
+    try {
+      const startTime = startTimeParam ? new Date(parseInt(startTimeParam)) : null
+      const endTime = endTimeParam ? new Date(parseInt(endTimeParam)) : null
+
+      const chartData = await queryPriceHistory(
+        marketId,
+        yesTokenId,
+        noTokenId,
+        startTime,
+        endTime
+      )
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        success: true,
+        data: chartData,
+        count: chartData.length,
+      }))
+    } catch (error: any) {
+      console.error('[Server] Error querying price history:', error)
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: error.message || 'Failed to fetch price history' }))
+    }
     return
   }
 

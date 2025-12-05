@@ -188,6 +188,146 @@ export const recordMarketPrices = async (
 }
 
 /**
+ * Query price history from database
+ */
+export const queryPriceHistory = async (
+  marketId: string | null,
+  yesTokenId: string | null,
+  noTokenId: string | null,
+  startTime: Date | null,
+  endTime: Date | null
+): Promise<any[]> => {
+  if (!isInitialized || !pool) {
+    throw new Error('Database not initialized')
+  }
+
+  try {
+    // If we have marketId, we can query by marketId
+    // If we only have tokenIds, we need to find the marketId first
+    let queryMarketId = marketId
+
+    // If no marketId but we have tokenIds, try to find marketId from one of the tokens
+    if (!queryMarketId && yesTokenId) {
+      const marketResult = await pool.query(
+        `SELECT DISTINCT market_id FROM price_history WHERE token_id = $1 LIMIT 1`,
+        [yesTokenId]
+      )
+      if (marketResult.rows.length > 0) {
+        queryMarketId = marketResult.rows[0].market_id
+      }
+    }
+
+    if (!queryMarketId) {
+      return []
+    }
+
+    // Build time range filter
+    let timeFilter = ''
+    const params: any[] = [queryMarketId]
+    let paramIndex = 2
+
+    if (startTime) {
+      timeFilter += ` AND time >= $${paramIndex}`
+      params.push(startTime)
+      paramIndex++
+    }
+
+    if (endTime) {
+      timeFilter += ` AND time <= $${paramIndex}`
+      params.push(endTime)
+      paramIndex++
+    }
+
+    // Query for UP token prices (yesTokenId or first token)
+    const upTokenId = yesTokenId || null
+    const downTokenId = noTokenId || null
+
+    // If we have specific tokenIds, use them
+    let tokenFilter = ''
+    if (upTokenId && downTokenId) {
+      tokenFilter = ` AND token_id IN ($${paramIndex}, $${paramIndex + 1})`
+      params.push(upTokenId, downTokenId)
+    }
+
+    // Query to get all price points for this market
+    const query = `
+      SELECT 
+        EXTRACT(EPOCH FROM time_bucket('1 second', time)) * 1000 as time_ms,
+        token_id,
+        AVG(best_bid) as best_bid
+      FROM price_history
+      WHERE market_id = $1
+        ${timeFilter}
+        ${tokenFilter}
+      GROUP BY time_bucket('1 second', time), token_id
+      ORDER BY time_ms ASC
+    `
+
+    const result = await pool.query(query, params)
+
+    // Group by time bucket and combine UP/DOWN prices
+    const priceMap = new Map<number, { upPrice: number | null; downPrice: number | null }>()
+
+    for (const row of result.rows) {
+      const time = Math.round(row.time_ms)
+      const tokenId = row.token_id
+      const price = parseFloat(row.best_bid) / 100 // Convert from cents to dollars
+
+      if (!priceMap.has(time)) {
+        priceMap.set(time, { upPrice: null, downPrice: null })
+      }
+
+      const point = priceMap.get(time)!
+      
+      // Determine if this is UP or DOWN token
+      if (upTokenId && tokenId === upTokenId) {
+        point.upPrice = price
+      } else if (downTokenId && tokenId === downTokenId) {
+        point.downPrice = price
+      } else if (!upTokenId && !downTokenId) {
+        // No specific tokenIds - use first seen as UP, second as DOWN
+        if (point.upPrice === null) {
+          point.upPrice = price
+        } else if (point.downPrice === null) {
+          point.downPrice = price
+        }
+      }
+    }
+
+    // Convert map to sorted array
+    const sortedTimes = Array.from(priceMap.keys()).sort((a, b) => a - b)
+    
+    // Forward-fill missing prices (carry previous value forward)
+    let lastUpPrice = 0
+    let lastDownPrice = 0
+    
+    const chartData: Array<{ time: number; upPrice: number; downPrice: number }> = []
+    
+    for (const time of sortedTimes) {
+      const point = priceMap.get(time)!
+      
+      // Use current price or carry forward the last known price
+      const upPrice = point.upPrice !== null ? point.upPrice : lastUpPrice
+      const downPrice = point.downPrice !== null ? point.downPrice : lastDownPrice
+      
+      // Update last known prices
+      if (point.upPrice !== null) lastUpPrice = point.upPrice
+      if (point.downPrice !== null) lastDownPrice = point.downPrice
+      
+      // Only add points where we have at least one valid price
+      if (upPrice > 0 || downPrice > 0) {
+        chartData.push({ time, upPrice, downPrice })
+      }
+    }
+
+    return chartData
+  } catch (error: any) {
+    console.error('[PriceRecorder] Error querying price history:', error)
+    throw error
+  }
+}
+
+/**
  * Close database connection pool (for graceful shutdown)
  */
 export const closePriceRecorder = async (): Promise<void> => {
