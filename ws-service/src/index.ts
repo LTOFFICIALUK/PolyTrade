@@ -1354,19 +1354,28 @@ function startOrderbookPolling(wsServer: WebSocketServer, markets: any[]): void 
     pollCount++
     let updatedCount = 0
     
-    // Filter to only the 8 active markets we care about (4 pairs × 2 timeframes)
+    // Filter to only markets that are CURRENTLY LIVE (within their event window)
     const now = Date.now()
     const activeMarketsToPoll = allMarkets.filter(m => {
       const metadata = m.metadata
       if (!metadata) return false
       
-      // Market must be active (not expired)
-      const isActive = !metadata.endTime || metadata.endTime > now
-      if (!isActive) return false
-      
       // Must have a token ID
       const primaryToken = metadata?.yesTokenId || metadata?.tokenId || metadata?.tokenIds?.[0]
       if (!primaryToken) return false
+      
+      // Market must be CURRENTLY LIVE (started and not ended)
+      const eventStart = metadata.eventStartTime || metadata.startTime
+      const eventEnd = metadata.eventEndTime || metadata.endTime
+      
+      // If we have start/end times, check if market is currently live
+      if (eventStart && eventEnd) {
+        const isLive = now >= eventStart && now <= eventEnd
+        if (!isLive) return false
+      } else if (eventEnd) {
+        // Only have end time - must not have ended
+        if (now > eventEnd) return false
+      }
       
       // Must match one of our tracked pairs
       const question = (metadata.question || '').toUpperCase()
@@ -1382,27 +1391,20 @@ function startOrderbookPolling(wsServer: WebSocketServer, markets: any[]): void 
       })
       if (!matchesPair) return false
       
-      // Must match one of our tracked timeframes
-      let marketTimeframe = metadata.eventTimeframe?.toLowerCase() || ''
-      if (!marketTimeframe && metadata.slug) {
-        if (metadata.slug.includes('-up-or-down-') && metadata.slug.endsWith('-et')) {
-          marketTimeframe = '1h'
-        } else if (metadata.slug.includes('-1h-') || metadata.slug.includes('-hourly-')) {
-          marketTimeframe = '1h'
-        } else if (metadata.slug.includes('-15m-')) {
-          marketTimeframe = '15m'
-        }
-      }
-      if (marketTimeframe === 'hourly') marketTimeframe = '1h'
-      
-      const matchesTimeframe = !marketTimeframe || TRACKED_TIMEFRAMES.includes(marketTimeframe)
-      
-      return matchesTimeframe
+      return true
     })
     
     // Also get all subscribed tokenIds from clients (in case they subscribed to markets not in our filter)
     const subscribedIds = wsServer.getAllSubscribedIds()
-    console.log(`[Server] Polling: ${activeMarketsToPoll.length} filtered markets, ${subscribedIds.size} client subscriptions`)
+    
+    // Log which markets we're polling (once every 30 seconds)
+    if (pollCount % 30 === 1) {
+      console.log(`[Server] Polling: ${activeMarketsToPoll.length} LIVE markets from ${allMarkets.length} total`)
+      activeMarketsToPoll.forEach(m => {
+        const meta = m.metadata
+        console.log(`[Server]   - ${m.marketId}: ${meta?.question?.substring(0, 50)}... (${meta?.eventTimeframe || 'unknown'})`)
+      })
+    }
     
     // Poll ALL active tracked markets every interval (no rotation)
     const marketsToPoll = activeMarketsToPoll
