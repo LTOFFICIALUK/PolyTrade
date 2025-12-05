@@ -172,6 +172,13 @@ export const recordPrice = async (
       // Use best bid as the price (what the chart uses)
       const price = bidPrice
 
+      // Debug: Log recorded prices (only every 10th record to avoid spam)
+      const recordCount = ((recordPrice as any).recordCount || 0) + 1
+      ;(recordPrice as any).recordCount = recordCount
+      if (recordCount % 10 === 0) {
+        console.log(`[PriceRecorder] Recording: marketId=${marketId.substring(0,20)}..., tokenId=${tokenId.substring(0,12)}..., bid=${price.toFixed(1)}c, ask=${askPrice.toFixed(1)}c`)
+      }
+
       // We need to determine if this is UP or DOWN token
       // For now, we'll store in best_bid/best_ask and let the API query determine UP/DOWN
       // by matching tokenId to yesTokenId/noTokenId from market metadata
