@@ -254,13 +254,19 @@ export const recordMarketPrices = async (
   
   if (shouldAddNew) {
     // Create new point, preserving previous values for fields not being updated
-    buffer.prices.push({
+    const newPoint = {
       t: now,
       yb: yesBidCents > 0 ? yesBidCents : (lastPrice?.yb || 0),
       ya: yesAskCents > 0 ? yesAskCents : (lastPrice?.ya || 0),
       nb: noBidCents > 0 ? noBidCents : (lastPrice?.nb || 0),
       na: noAskCents > 0 ? noAskCents : (lastPrice?.na || 0),
-    })
+    }
+    buffer.prices.push(newPoint)
+    
+    // Log periodically
+    if (buffer.prices.length % 30 === 1) {
+      console.log(`[PriceRecorder] Buffer ${marketId.substring(0, 25)}... has ${buffer.prices.length} points. Latest: yb=${newPoint.yb}c nb=${newPoint.nb}c`)
+    }
   } else {
     // Update existing point - only update non-zero values
     if (yesBidCents > 0) lastPrice.yb = yesBidCents
@@ -351,7 +357,7 @@ export const queryPriceHistory = async (
   if (marketId) {
     const buffer = marketBuffers.get(marketId)
     if (buffer && buffer.prices.length > 0) {
-      console.log(`[PriceRecorder] Found ${buffer.prices.length} prices in memory buffer for market`)
+      console.log(`[PriceRecorder] ✅ Found ${buffer.prices.length} prices in memory buffer for market ${marketId.substring(0,25)}...`)
       for (const p of buffer.prices) {
         // Filter by time range if specified
         if (startTime && p.t < startTime.getTime()) continue
@@ -363,6 +369,9 @@ export const queryPriceHistory = async (
           downPrice: p.nb / 100,
         })
       }
+      console.log(`[PriceRecorder] After time filter: ${chartData.length} points`)
+    } else {
+      console.log(`[PriceRecorder] ❌ No buffer found for marketId: ${marketId}`)
     }
   }
   
