@@ -130,12 +130,13 @@ export const fetchMultipleOrderbooks = async (tokenIds: string[]): Promise<Map<s
 
     const data = await response.json() as any[]
     
-    // Debug: Log first 2 results
+    // Debug: Log raw API response for first 2 results
     if (data.length > 0) {
       const sample = data.slice(0, 2)
       sample.forEach((book: any, i: number) => {
+        const firstBid = book.bids?.[0]?.price
         const lastBid = book.bids?.[book.bids?.length - 1]?.price
-        console.log(`[clobClient] Book ${i}: asset_id=${book.asset_id?.substring(0, 20)}..., bids=${book.bids?.length}, lastBid(best)=${lastBid}`)
+        console.log(`[clobClient] RAW Book ${i}: asset_id=${book.asset_id?.substring(0, 20)}..., bids=${book.bids?.length}, firstBid=${firstBid}, lastBid=${lastBid}`)
       })
     }
     
@@ -149,16 +150,26 @@ export const fetchMultipleOrderbooks = async (tokenIds: string[]): Promise<Map<s
         // IMPORTANT: Sort bids/asks properly regardless of API order
         // Best bid = HIGHEST buy price (what buyers will pay)
         // Best ask = LOWEST sell price (what sellers will accept)
-        const bids = Array.isArray(orderbook.bids) 
-          ? [...orderbook.bids].sort((a: any, b: any) => parseFloat(b.price) - parseFloat(a.price))  // Highest first
-          : []
-        const asks = Array.isArray(orderbook.asks)
-          ? [...orderbook.asks].sort((a: any, b: any) => parseFloat(a.price) - parseFloat(b.price))  // Lowest first
-          : []
+        const rawBids = Array.isArray(orderbook.bids) ? orderbook.bids : []
+        const rawAsks = Array.isArray(orderbook.asks) ? orderbook.asks : []
         
-        // Debug: Log the best prices we found
-        if (bids.length > 0 && asks.length > 0) {
-          console.log(`[clobClient] Token ${tokenId.substring(0,12)}... bestBid=${bids[0].price} bestAsk=${asks[0].price}`)
+        // Sort bids: highest price first (best bid at index 0)
+        const bids = [...rawBids].sort((a: any, b: any) => {
+          const priceA = parseFloat(a.price)
+          const priceB = parseFloat(b.price)
+          return priceB - priceA  // Descending: highest first
+        })
+        
+        // Sort asks: lowest price first (best ask at index 0)
+        const asks = [...rawAsks].sort((a: any, b: any) => {
+          const priceA = parseFloat(a.price)
+          const priceB = parseFloat(b.price)
+          return priceA - priceB  // Ascending: lowest first
+        })
+        
+        // Debug: Log before/after sorting to verify
+        if (bids.length > 0 && asks.length > 0 && i < 2) {
+          console.log(`[clobClient] SORTED Token ${tokenId.substring(0,12)}... rawFirst=${rawBids[0]?.price} rawLast=${rawBids[rawBids.length-1]?.price} -> sortedBest=${bids[0].price}`)
         }
         
         // Extract full OrderBookSummary including timestamp and hash for change detection
