@@ -7,11 +7,76 @@ import { Pool } from 'pg'
 
 let pool: Pool | null = null
 let isInitialized = false
+let migrationRun = false
+
+/**
+ * Run database migrations (create tables if they don't exist)
+ */
+const runMigrations = async (pool: Pool): Promise<void> => {
+  if (migrationRun) return
+  
+  try {
+    console.log('[PriceRecorder] Running database migrations...')
+    
+    // Enable TimescaleDB extension
+    await pool.query('CREATE EXTENSION IF NOT EXISTS timescaledb')
+    
+    // Create price_history table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS price_history (
+        time TIMESTAMPTZ NOT NULL,
+        market_id TEXT NOT NULL,
+        token_id TEXT NOT NULL,
+        up_price DECIMAL(10,4),
+        down_price DECIMAL(10,4),
+        best_bid DECIMAL(10,4),
+        best_ask DECIMAL(10,4),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (time, market_id, token_id)
+      )
+    `)
+    
+    // Convert to hypertable (TimescaleDB optimization)
+    // Check if hypertable already exists first
+    const hypertableCheck = await pool.query(`
+      SELECT * FROM timescaledb_information.hypertables 
+      WHERE hypertable_name = 'price_history'
+    `)
+    
+    if (hypertableCheck.rows.length === 0) {
+      await pool.query(`SELECT create_hypertable('price_history', 'time', if_not_exists => TRUE)`)
+      console.log('[PriceRecorder] Created price_history hypertable')
+    }
+    
+    // Create indexes
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_price_history_market_time 
+      ON price_history (market_id, time DESC)
+    `)
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_price_history_token_time 
+      ON price_history (token_id, time DESC)
+    `)
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_price_history_time 
+      ON price_history (time DESC)
+    `)
+    
+    migrationRun = true
+    console.log('[PriceRecorder] ✅ Database migrations completed successfully')
+  } catch (error: any) {
+    console.error('[PriceRecorder] Migration error:', error.message)
+    // Don't throw - allow service to continue even if migration fails
+    // It might fail if tables already exist, which is fine
+  }
+}
 
 /**
  * Initialize database connection pool
  */
-export const initializePriceRecorder = (): void => {
+export const initializePriceRecorder = async (): Promise<void> => {
   if (isInitialized) return
 
   const databaseUrl = process.env.DATABASE_URL
@@ -35,6 +100,9 @@ export const initializePriceRecorder = (): void => {
 
     isInitialized = true
     console.log('[PriceRecorder] Initialized database connection pool')
+    
+    // Run migrations automatically
+    await runMigrations(pool)
   } catch (error) {
     console.error('[PriceRecorder] Failed to initialize database:', error)
     pool = null

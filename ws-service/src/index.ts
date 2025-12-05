@@ -1616,8 +1616,10 @@ function startAutomaticMarketRefresh() {
   }, 60 * 1000) // 1 minute after startup
 }
 
-// Initialize price recorder (database connection)
-initializePriceRecorder()
+// Initialize price recorder (database connection) - runs migrations automatically
+initializePriceRecorder().catch((error) => {
+  console.error('[Server] Failed to initialize price recorder:', error)
+})
 
 // Start server
 httpServer.listen(HTTP_PORT, () => {
