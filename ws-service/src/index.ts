@@ -465,6 +465,17 @@ const httpServer = http.createServer(async (req, res) => {
                 const yesTokenId = marketMetadata.yesTokenId || marketMetadata.tokenId || marketMetadata.tokenIds?.[0] || null
                 const noTokenId = marketMetadata.noTokenId || marketMetadata.tokenIds?.[1] || null
                 
+                // IMPORTANT: Add this market to the state store so it gets polled
+                const stateStore = wsServer.getStateStore()
+                const enrichedMetadata = {
+                  ...marketMetadata,
+                  eventStartTime: eventStart,
+                  eventEndTime: eventEnd,
+                  eventTimeframe: timeframeNormalized,
+                }
+                stateStore.setMarketMetadata(marketMetadata.marketId, enrichedMetadata)
+                console.log(`[Server] Added offset market ${marketMetadata.marketId} to state store for polling`)
+                
                 res.writeHead(200, { 'Content-Type': 'application/json' })
                 res.end(JSON.stringify({
                   marketId: marketMetadata.marketId,
@@ -1042,6 +1053,16 @@ const httpServer = http.createServer(async (req, res) => {
           
           console.log(`[Server] Returning market: ${currentMarket.marketId}, isSettled=${isSettled}, isInWindow=${eventStart && eventEnd ? (now >= eventStart && now < eventEnd) : false}`)
           
+          // IMPORTANT: Ensure this market is in the state store for polling
+          const stateStore = wsServer.getStateStore()
+          const enrichedMetadata = {
+            ...currentMarket.metadata,
+            eventStartTime: eventStart,
+            eventEndTime: eventEnd,
+          }
+          stateStore.setMarketMetadata(currentMarket.marketId, enrichedMetadata)
+          console.log(`[Server] Ensured market ${currentMarket.marketId} is in state store for polling`)
+          
           res.writeHead(200, { 'Content-Type': 'application/json' })
           const yesTokenId = currentMarket.metadata.yesTokenId || currentMarket.metadata.tokenId || currentMarket.metadata.tokenIds?.[0] || null
           const noTokenId = currentMarket.metadata.noTokenId || currentMarket.metadata.tokenIds?.[1] || null
@@ -1354,7 +1375,7 @@ function startOrderbookPolling(wsServer: WebSocketServer, markets: any[]): void 
     pollCount++
     let updatedCount = 0
     
-    // Filter to only markets that are CURRENTLY LIVE (within their event window)
+    // Filter to markets that are active (not expired)
     const now = Date.now()
     const activeMarketsToPoll = allMarkets.filter(m => {
       const metadata = m.metadata
@@ -1364,18 +1385,9 @@ function startOrderbookPolling(wsServer: WebSocketServer, markets: any[]): void 
       const primaryToken = metadata?.yesTokenId || metadata?.tokenId || metadata?.tokenIds?.[0]
       if (!primaryToken) return false
       
-      // Market must be CURRENTLY LIVE (started and not ended)
-      const eventStart = metadata.eventStartTime || metadata.startTime
+      // Market must not have ended
       const eventEnd = metadata.eventEndTime || metadata.endTime
-      
-      // If we have start/end times, check if market is currently live
-      if (eventStart && eventEnd) {
-        const isLive = now >= eventStart && now <= eventEnd
-        if (!isLive) return false
-      } else if (eventEnd) {
-        // Only have end time - must not have ended
-        if (now > eventEnd) return false
-      }
+      if (eventEnd && now > eventEnd + 60000) return false // Allow 1 min grace period
       
       // Must match one of our tracked pairs
       const question = (metadata.question || '').toUpperCase()
