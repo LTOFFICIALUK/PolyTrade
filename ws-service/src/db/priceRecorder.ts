@@ -64,6 +64,37 @@ const runMigrations = async (pool: Pool): Promise<void> => {
       ON price_history (time DESC)
     `)
     
+    // Enable compression to reduce storage by 90%+
+    try {
+      await pool.query(`
+        ALTER TABLE price_history SET (
+          timescaledb.compress,
+          timescaledb.compress_segmentby = 'market_id, token_id'
+        )
+      `)
+      
+      // Add compression policy: compress chunks older than 15 minutes (aggressive for Railway)
+      await pool.query(`
+        SELECT add_compression_policy('price_history', INTERVAL '15 minutes', if_not_exists => TRUE)
+      `)
+      console.log('[PriceRecorder] Enabled compression policy (15 min)')
+    } catch (compressionError: any) {
+      // Compression might already be enabled, that's fine
+      console.log('[PriceRecorder] Compression setup:', compressionError.message)
+    }
+    
+    // Add retention policy: Delete data older than 2 days to prevent disk space issues
+    // Railway free tier has very limited storage - keep only 2 days for aggressive compression
+    try {
+      await pool.query(`
+        SELECT add_retention_policy('price_history', INTERVAL '2 days', if_not_exists => TRUE)
+      `)
+      console.log('[PriceRecorder] Enabled retention policy (2 days)')
+    } catch (retentionError: any) {
+      // Retention might already be enabled, that's fine
+      console.log('[PriceRecorder] Retention policy setup:', retentionError.message)
+    }
+    
     migrationRun = true
     console.log('[PriceRecorder] ✅ Database migrations completed successfully')
   } catch (error: any) {
