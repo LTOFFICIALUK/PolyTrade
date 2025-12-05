@@ -227,9 +227,9 @@ export const recordMarketPrices = async (
   
   // Get or create buffer
   let buffer = marketBuffers.get(marketId)
-  const isNewBuffer = !buffer || (eventStart && buffer.eventStart !== eventStart)
   
-  if (isNewBuffer) {
+  if (!buffer || (eventStart && buffer.eventStart !== eventStart)) {
+    // Create new buffer
     buffer = {
       eventStart: eventStart || now,
       eventEnd: eventEnd || now + 3600000,
@@ -242,14 +242,17 @@ export const recordMarketPrices = async (
     console.log(`[PriceRecorder] NEW buffer for marketId: ${marketId.substring(0, 30)}... (total buffers: ${marketBuffers.size})`)
   }
   
+  // Now buffer is guaranteed to exist
+  const currentBuffer = buffer
+  
   // Update metadata
-  if (yesTokenId) buffer.yesTokenId = yesTokenId
-  if (noTokenId) buffer.noTokenId = noTokenId
-  if (eventEnd) buffer.eventEnd = eventEnd
+  if (yesTokenId) currentBuffer.yesTokenId = yesTokenId
+  if (noTokenId) currentBuffer.noTokenId = noTokenId
+  if (eventEnd) currentBuffer.eventEnd = eventEnd
   
   // Add or update price point
   // Only update non-zero values to preserve data from other token updates
-  const lastPrice = buffer.prices[buffer.prices.length - 1]
+  const lastPrice = currentBuffer.prices[currentBuffer.prices.length - 1]
   const shouldAddNew = !lastPrice || (now - lastPrice.t) >= 900
   
   if (shouldAddNew) {
@@ -261,13 +264,13 @@ export const recordMarketPrices = async (
       nb: noBidCents > 0 ? noBidCents : (lastPrice?.nb || 0),
       na: noAskCents > 0 ? noAskCents : (lastPrice?.na || 0),
     }
-    buffer.prices.push(newPoint)
+    currentBuffer.prices.push(newPoint)
     
     // Log periodically
-    if (buffer.prices.length % 30 === 1) {
-      console.log(`[PriceRecorder] Buffer ${marketId.substring(0, 25)}... has ${buffer.prices.length} points. Latest: yb=${newPoint.yb}c nb=${newPoint.nb}c`)
+    if (currentBuffer.prices.length % 30 === 1) {
+      console.log(`[PriceRecorder] Buffer ${marketId.substring(0, 25)}... has ${currentBuffer.prices.length} points. Latest: yb=${newPoint.yb}c nb=${newPoint.nb}c`)
     }
-  } else {
+  } else if (lastPrice) {
     // Update existing point - only update non-zero values
     if (yesBidCents > 0) lastPrice.yb = yesBidCents
     if (yesAskCents > 0) lastPrice.ya = yesAskCents
