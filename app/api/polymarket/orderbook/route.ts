@@ -41,11 +41,20 @@ export async function GET(req: Request) {
 
       const data = await response.json()
       // CLOB API returns { bids: [...], asks: [...] } directly
-      // IMPORTANT: Polymarket CLOB API returns bids/asks in REVERSE order:
-      // - Bids: sorted lowest to highest (we need highest to lowest)
-      // - Asks: sorted highest to lowest (we need lowest to highest)
-      const bids = Array.isArray(data.bids) ? [...data.bids].reverse() : []
-      const asks = Array.isArray(data.asks) ? [...data.asks].reverse() : []
+      // Sort bids by price DESCENDING (highest/best bid first)
+      // Sort asks by price ASCENDING (lowest/best ask first)
+      const bids = Array.isArray(data.bids) 
+        ? [...data.bids].sort((a: any, b: any) => parseFloat(b.price) - parseFloat(a.price))
+        : []
+      const asks = Array.isArray(data.asks)
+        ? [...data.asks].sort((a: any, b: any) => parseFloat(a.price) - parseFloat(b.price))
+        : []
+      
+      // Debug log
+      if (bids.length > 0) {
+        console.log(`[Orderbook API] tokenId=${tokenId?.substring(0,12)}... bestBid=${bids[0].price} (${bids.length} bids)`)
+      }
+      
       return NextResponse.json({
         bids: bids,
         asks: asks,
@@ -75,10 +84,14 @@ export async function GET(req: Request) {
 
       const data = await response.json()
       // CLOB batch API returns array of { asset_id, bids, asks }
-      // IMPORTANT: Polymarket CLOB API returns bids/asks in REVERSE order - reverse them
+      // Sort bids by price DESCENDING, asks by price ASCENDING
       if (Array.isArray(data) && data.length > 0) {
-        const bids = Array.isArray(data[0].bids) ? [...data[0].bids].reverse() : []
-        const asks = Array.isArray(data[0].asks) ? [...data[0].asks].reverse() : []
+        const bids = Array.isArray(data[0].bids) 
+          ? [...data[0].bids].sort((a: any, b: any) => parseFloat(b.price) - parseFloat(a.price))
+          : []
+        const asks = Array.isArray(data[0].asks)
+          ? [...data[0].asks].sort((a: any, b: any) => parseFloat(a.price) - parseFloat(b.price))
+          : []
         return NextResponse.json({
           bids: bids,
           asks: asks,
@@ -161,9 +174,13 @@ export async function GET(req: Request) {
       }
 
       const data = await response.json()
-      // IMPORTANT: Polymarket CLOB API returns bids/asks in REVERSE order - reverse them
-      const bids = Array.isArray(data.bids) ? [...data.bids].reverse() : []
-      const asks = Array.isArray(data.asks) ? [...data.asks].reverse() : []
+      // Sort bids by price DESCENDING, asks by price ASCENDING
+      const bids = Array.isArray(data.bids) 
+        ? [...data.bids].sort((a: any, b: any) => parseFloat(b.price) - parseFloat(a.price))
+        : []
+      const asks = Array.isArray(data.asks)
+        ? [...data.asks].sort((a: any, b: any) => parseFloat(a.price) - parseFloat(b.price))
+        : []
       return NextResponse.json({
         bids: bids,
         asks: asks,
