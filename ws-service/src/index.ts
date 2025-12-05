@@ -10,7 +10,7 @@ import http from 'http'
 import { WebSocketServer } from './ws/server'
 import { MarketsStateStore } from './state/marketsState'
 import { fetchMarketsList, fetchOrderbook, fetchMultipleOrderbooks, fetchMarketBySlug, MarketMetadata } from './polymarket/clobClient'
-import { initializePriceRecorder, recordPrice, closePriceRecorder, queryPriceHistory } from './db/priceRecorder'
+import { initializePriceRecorder, recordMarketPrices, closePriceRecorder, queryPriceHistory } from './db/priceRecorder'
 
 const POLYMARKET_GAMMA_API = process.env.POLYMARKET_GAMMA_API || 'https://gamma-api.polymarket.com'
 
@@ -1110,7 +1110,7 @@ const httpServer = http.createServer(async (req, res) => {
     return
   }
 
-  // Price history endpoint
+  // Price history endpoint - serves chart data from optimized JSONB storage
   if (path === '/api/price-history' && req.method === 'GET') {
     const marketId = url.searchParams.get('marketId')
     const yesTokenId = url.searchParams.get('yesTokenId')
@@ -1118,7 +1118,6 @@ const httpServer = http.createServer(async (req, res) => {
     const startTimeParam = url.searchParams.get('startTime')
     const endTimeParam = url.searchParams.get('endTime')
 
-    // We need either marketId OR both tokenIds
     if (!marketId && (!yesTokenId || !noTokenId)) {
       res.writeHead(400, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Missing required parameters: marketId OR (yesTokenId and noTokenId)' }))
@@ -1485,10 +1484,23 @@ function startOrderbookPolling(wsServer: WebSocketServer, markets: any[]): void 
             })
           }
           
-          // Record price to database (non-blocking, fire-and-forget)
-          // We record each token's price individually as it comes in
-          if (marketState) {
-            recordPrice(marketId, tokenId, bestBid, bestAsk)
+          // Record price to database (optimized - groups by market event)
+          if (marketState && marketState.metadata) {
+            const meta = marketState.metadata
+            const isYesToken = tokenId === meta.yesTokenId || tokenId === meta.tokenId
+            // Use recordMarketPrices for optimized storage
+            // The priceRecorder will buffer and batch these into JSONB
+            recordMarketPrices(
+              marketId,
+              meta.yesTokenId || meta.tokenId || tokenId,
+              meta.noTokenId || '',
+              isYesToken ? bestBid : 0,
+              isYesToken ? bestAsk : 0,
+              !isYesToken ? bestBid : 0,
+              !isYesToken ? bestAsk : 0,
+              meta.eventStartTime || meta.startTime,
+              meta.eventEndTime || meta.endTime
+            )
           }
           
           // Only broadcast if there are subscribers for this tokenId/marketId
@@ -1657,10 +1669,8 @@ function startAutomaticMarketRefresh() {
   }, 60 * 1000) // 1 minute after startup
 }
 
-// Initialize price recorder (database connection) - runs migrations automatically
-initializePriceRecorder().catch((error) => {
-  console.error('[Server] Failed to initialize price recorder:', error)
-})
+// Initialize price recorder (database connection)
+initializePriceRecorder()
 
 // Start server
 httpServer.listen(HTTP_PORT, () => {
