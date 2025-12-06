@@ -696,8 +696,10 @@ export default function StrategyDetailPage() {
                           </td>
                           <td className="py-3 text-right">
                             <span className={`px-2 py-0.5 rounded text-xs ${
-                              trade.status === 'settled' ? 'bg-green-500/20 text-green-400' :
+                              trade.status === 'filled' ? 'bg-green-500/20 text-green-400' :
                               trade.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400' :
+                              trade.status === 'partial' ? 'bg-blue-500/20 text-blue-400' :
+                              trade.status === 'cancelled' ? 'bg-red-500/20 text-red-400' :
                               'bg-gray-700 text-gray-400'
                             }`}>
                               {trade.status}

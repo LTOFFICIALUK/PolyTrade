@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, KeyboardEvent, useEffect, useRef } from 'react'
+import { useState, KeyboardEvent, useEffect, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createStrategyAPI, updateStrategyAPI, fetchStrategy, Strategy } from '@/hooks/useStrategies'
 import { useWallet } from '@/contexts/WalletContext'
@@ -93,7 +93,7 @@ interface StrategyConfig {
   }>
 }
 
-export default function StrategyEditorPage() {
+function StrategyEditorContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const editId = searchParams.get('edit')
@@ -2379,3 +2379,23 @@ function PreviewPanel({ config }: { config: StrategyConfig }) {
   )
 }
 
+// Loading fallback for Suspense boundary
+function StrategyEditorLoading() {
+  return (
+    <div className="min-h-screen bg-black flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading strategy editor...</p>
+      </div>
+    </div>
+  )
+}
+
+// Default export wraps content in Suspense for useSearchParams
+export default function StrategyEditorPage() {
+  return (
+    <Suspense fallback={<StrategyEditorLoading />}>
+      <StrategyEditorContent />
+    </Suspense>
+  )
+}

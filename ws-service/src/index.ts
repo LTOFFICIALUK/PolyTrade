@@ -36,6 +36,18 @@ import {
   Candle as IndicatorCandle
 } from './indicators/indicatorCalculator'
 import { getStrategyMonitor, StrategyTrigger } from './strategies/strategyMonitor'
+import { 
+  initializeTradingKeyRecorder, 
+  closeTradingKeyRecorder,
+  storePrivateKey,
+  hasStoredKey,
+  getKeyMetadata,
+  deactivateKey,
+  deleteKey,
+  getKeyAuditLog,
+} from './db/tradingKeyRecorder'
+import { isKeyVaultConfigured } from './security/keyVault'
+import { executeTrade, canExecuteTrades, testKeySignature } from './trading/tradeExecutor'
 
 const POLYMARKET_GAMMA_API = process.env.POLYMARKET_GAMMA_API || 'https://gamma-api.polymarket.com'
 
@@ -269,6 +281,173 @@ const httpServer = http.createServer(async (req, res) => {
       success: true,
       message: 'Strategy check triggered',
     }))
+    return
+  }
+
+  // ============================================
+  // Trading Key Management Endpoints
+  // ============================================
+
+  // Check if key vault is configured
+  if (path === '/api/trading/status' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      success: true,
+      vaultConfigured: isKeyVaultConfigured(),
+    }))
+    return
+  }
+
+  // Check if user has a trading key
+  if (path === '/api/trading/key/check' && req.method === 'GET') {
+    const userAddress = url.searchParams.get('address')
+    if (!userAddress) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: false, error: 'Missing address parameter' }))
+      return
+    }
+
+    const hasKey = await hasStoredKey(userAddress)
+    const metadata = hasKey ? await getKeyMetadata(userAddress) : null
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      success: true,
+      hasKey,
+      metadata: metadata ? {
+        isActive: metadata.isActive,
+        createdAt: metadata.createdAt,
+        lastUsedAt: metadata.lastUsedAt,
+      } : null,
+    }))
+    return
+  }
+
+  // Store a trading key
+  if (path === '/api/trading/key' && req.method === 'POST') {
+    if (!isKeyVaultConfigured()) {
+      res.writeHead(503, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ 
+        success: false, 
+        error: 'Trading key vault not configured. Contact administrator.' 
+      }))
+      return
+    }
+
+    let body = ''
+    req.on('data', chunk => { body += chunk })
+    await new Promise<void>(resolve => req.on('end', resolve))
+
+    try {
+      const { userAddress, privateKey } = JSON.parse(body)
+
+      if (!userAddress || !privateKey) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: 'Missing userAddress or privateKey' }))
+        return
+      }
+
+      // Get IP and user agent for audit
+      const ipAddress = req.headers['x-forwarded-for']?.toString() || req.socket.remoteAddress
+      const userAgent = req.headers['user-agent']
+
+      const result = await storePrivateKey(userAddress, privateKey, ipAddress, userAgent)
+
+      if (result.success) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: true, message: 'Trading key stored securely' }))
+      } else {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: result.error }))
+      }
+    } catch (error: any) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: false, error: 'Invalid request body' }))
+    }
+    return
+  }
+
+  // Delete a trading key
+  if (path === '/api/trading/key' && req.method === 'DELETE') {
+    const userAddress = url.searchParams.get('address')
+    if (!userAddress) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: false, error: 'Missing address parameter' }))
+      return
+    }
+
+    const ipAddress = req.headers['x-forwarded-for']?.toString() || req.socket.remoteAddress
+    const userAgent = req.headers['user-agent']
+
+    const deleted = await deleteKey(userAddress, ipAddress, userAgent)
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ 
+      success: deleted, 
+      message: deleted ? 'Trading key deleted' : 'No key found' 
+    }))
+    return
+  }
+
+  // Test that a stored key can sign
+  if (path === '/api/trading/key/test' && req.method === 'POST') {
+    let body = ''
+    req.on('data', chunk => { body += chunk })
+    await new Promise<void>(resolve => req.on('end', resolve))
+
+    try {
+      const { userAddress } = JSON.parse(body)
+
+      if (!userAddress) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: 'Missing userAddress' }))
+        return
+      }
+
+      const canSign = await testKeySignature(userAddress)
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ 
+        success: true, 
+        canSign,
+        message: canSign ? 'Key verified successfully' : 'Key verification failed'
+      }))
+    } catch (error: any) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: false, error: 'Invalid request body' }))
+    }
+    return
+  }
+
+  // Get key audit log
+  if (path === '/api/trading/key/audit' && req.method === 'GET') {
+    const userAddress = url.searchParams.get('address')
+    if (!userAddress) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: false, error: 'Missing address parameter' }))
+      return
+    }
+
+    const auditLog = await getKeyAuditLog(userAddress)
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ success: true, auditLog }))
+    return
+  }
+
+  // Check if user can execute trades
+  if (path === '/api/trading/can-trade' && req.method === 'GET') {
+    const userAddress = url.searchParams.get('address')
+    if (!userAddress) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: false, error: 'Missing address parameter' }))
+      return
+    }
+
+    const result = await canExecuteTrades(userAddress)
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ success: true, ...result }))
     return
   }
 
@@ -2250,9 +2429,10 @@ function startAutomaticMarketRefresh() {
   }, 60 * 1000) // 1 minute after startup
 }
 
-// Initialize database recorders (price and strategy)
+// Initialize database recorders (price, strategy, and trading keys)
 initializePriceRecorder()
 initializeStrategyRecorder()
+initializeTradingKeyRecorder()
 
 // Start crypto price feeder (BTC, ETH, SOL, XRP from Polymarket RTDS)
 const cryptoPriceFeeder = getCryptoPriceFeeder()
@@ -2274,11 +2454,64 @@ cryptoPriceFeeder.on('candleClosed', (candle) => {
 // Start strategy monitor (checks active strategies every minute)
 const strategyMonitor = getStrategyMonitor()
 strategyMonitor.start()
-strategyMonitor.on('strategyTriggered', (trigger: StrategyTrigger) => {
+strategyMonitor.on('strategyTriggered', async (trigger: StrategyTrigger) => {
   console.log(`[StrategyMonitor] 🎯 TRIGGERED: "${trigger.strategyName}" for ${trigger.asset}`)
   console.log(`[StrategyMonitor]   User: ${trigger.userAddress}`)
   console.log(`[StrategyMonitor]   Conditions: ${trigger.triggeredConditions.map((c: { description: string }) => c.description).join(', ')}`)
-  // TODO: Step 5 - Execute trade or send notification
+  
+  // Execute the trade automatically
+  try {
+    // Check if user can trade (has key configured)
+    const canTrade = await canExecuteTrades(trigger.userAddress)
+    if (!canTrade.canTrade) {
+      console.log(`[StrategyMonitor] ⚠️ Cannot execute trade: ${canTrade.reason}`)
+      return
+    }
+
+    // Get full strategy details for trade parameters
+    const strategy = await getStrategy(trigger.strategyId)
+    if (!strategy) {
+      console.log(`[StrategyMonitor] ⚠️ Strategy not found: ${trigger.strategyId}`)
+      return
+    }
+
+    // Determine trade direction from strategy
+    const side = strategy.direction === 'UP' ? 'BUY' : 'SELL'
+    
+    // Calculate order size based on strategy settings
+    let orderSize = 10 // Default 10 shares
+    if (strategy.orderSizeMode === 'fixed_shares' && strategy.fixedSharesAmount) {
+      orderSize = strategy.fixedSharesAmount
+    } else if (strategy.orderSizeMode === 'fixed_dollar' && strategy.fixedDollarAmount) {
+      // Approximate shares from dollar amount (assuming ~$0.50 per share avg)
+      orderSize = Math.floor(strategy.fixedDollarAmount * 2)
+    }
+
+    // Execute the trade
+    // Note: tokenId needs to come from the strategy's market selection
+    // For now, we log what would be traded
+    console.log(`[StrategyMonitor] 📈 Executing trade:`)
+    console.log(`[StrategyMonitor]   Side: ${side}`)
+    console.log(`[StrategyMonitor]   Size: ${orderSize} shares`)
+    console.log(`[StrategyMonitor]   Market: ${strategy.market}`)
+    console.log(`[StrategyMonitor]   Order Type: ${strategy.orderType || 'market'}`)
+
+    // TODO: Map strategy.market to actual Polymarket tokenId
+    // For now, skip actual execution until market mapping is complete
+    // const result = await executeTrade({
+    //   strategyId: trigger.strategyId,
+    //   userAddress: trigger.userAddress,
+    //   tokenId: tokenId, // Need to map from strategy
+    //   side: side as 'BUY' | 'SELL',
+    //   size: orderSize,
+    //   price: 0.50, // For market orders, get from orderbook
+    //   orderType: (strategy.orderType as 'market' | 'limit') || 'market',
+    // })
+
+    console.log(`[StrategyMonitor] ✅ Trade logged (execution pending market mapping)`)
+  } catch (error: any) {
+    console.error(`[StrategyMonitor] ❌ Trade execution error:`, error.message)
+  }
 })
 
 // Start server
@@ -2303,6 +2536,7 @@ process.on('SIGTERM', async () => {
     await closePriceRecorder()
     await closeStrategyRecorder()
     await closeCandleRecorder()
+    await closeTradingKeyRecorder()
     process.exit(0)
   })
 })
@@ -2315,6 +2549,7 @@ process.on('SIGINT', async () => {
     await closePriceRecorder()
     await closeStrategyRecorder()
     await closeCandleRecorder()
+    await closeTradingKeyRecorder()
     process.exit(0)
   })
 })
