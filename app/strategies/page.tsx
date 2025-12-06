@@ -177,55 +177,49 @@ export default function StrategiesPage() {
           </button>
         </div>
 
-        {loading ? (
-          <div className="py-16 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-primary mx-auto mb-4" />
-            <p className="text-gray-400 text-sm">Loading strategies...</p>
-          </div>
-        ) : error ? (
-          <div className="py-16 text-center">
-            <p className="text-red-400 text-sm mb-4">{error}</p>
+        {error && (
+          <div className="mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center justify-between">
+            <p className="text-red-400 text-sm">{error}</p>
             <button
               type="button"
               onClick={refetch}
-              className="inline-block px-6 py-2.5 bg-purple-primary hover:bg-purple-hover text-white rounded-lg text-sm font-medium transition-colors"
+              className="px-4 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded text-sm font-medium transition-colors"
             >
               Retry
             </button>
           </div>
-        ) : sortedStrategies.length === 0 ? (
-          <div className="py-16 text-center">
-            <h2 className="text-base font-medium text-gray-400 mb-1">No Strategies</h2>
-            <p className="text-sm text-gray-500 mb-6">
-              {address 
-                ? 'Create your first trading strategy to get started.'
-                : 'Connect your wallet to view your strategies, or browse public strategies.'}
-            </p>
-            <button
-              type="button"
-              onClick={handleCreateNew}
-              className="inline-block px-6 py-2.5 bg-purple-primary hover:bg-purple-hover text-white rounded-lg text-sm font-medium transition-colors"
-            >
-              Create Strategy
-            </button>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-gray-400 border-b border-gray-800">
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-gray-400 border-b border-gray-800">
+              <tr>
+                <th className="text-left py-3 px-4 font-medium w-16">Status</th>
+                <th className="text-left py-3 px-4 font-medium">Strategy Name</th>
+                <th className="text-left py-3 px-4 font-medium">Type</th>
+                <th className="text-right py-3 px-4 font-medium">PnL</th>
+                <th className="text-right py-3 px-4 font-medium">Total Trades</th>
+                <th className="text-right py-3 px-4 font-medium">Win Rate</th>
+                <th className="text-right py-3 px-4 font-medium">Last Updated</th>
+                <th className="text-right py-3 px-4 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
                 <tr>
-                  <th className="text-left py-3 px-4 font-medium w-16">Status</th>
-                  <th className="text-left py-3 px-4 font-medium">Strategy Name</th>
-                  <th className="text-left py-3 px-4 font-medium">Type</th>
-                  <th className="text-right py-3 px-4 font-medium">PnL</th>
-                  <th className="text-right py-3 px-4 font-medium">Total Trades</th>
-                  <th className="text-right py-3 px-4 font-medium">Win Rate</th>
-                  <th className="text-right py-3 px-4 font-medium">Last Updated</th>
-                  <th className="text-right py-3 px-4 font-medium">Actions</th>
+                  <td colSpan={8} className="py-16 text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-primary mx-auto mb-4" />
+                    <p className="text-gray-400 text-sm">Loading strategies...</p>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {sortedStrategies.map((strategy, index) => (
+              ) : sortedStrategies.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-16 text-center">
+                    <p className="text-gray-500 text-sm">No strategies yet</p>
+                  </td>
+                </tr>
+              ) : (
+                sortedStrategies.map((strategy, index) => (
                 <tr
                   key={strategy.id || `strategy-${index}`}
                   onClick={() => strategy.id && handleStrategyClick(strategy.id)}
@@ -333,11 +327,11 @@ export default function StrategiesPage() {
                         </div>
                       </td>
                     </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )
